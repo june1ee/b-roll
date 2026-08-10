@@ -301,14 +301,53 @@ def _prototypes(raw: dict) -> dict:
     return protos
 
 
+def _index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
+    """소재 id → (어느 목록에 들어있나, 소재)."""
+    out: dict[str, tuple[str, dict]] = {}
+    for key, items in mats.items():
+        if isinstance(items, list):
+            for m in items:
+                if isinstance(m, dict) and m.get("id"):
+                    out[m["id"]] = (key, m)
+    return out
+
+
+def _clone_extras(seg: dict, index: dict, mats: dict) -> None:
+    """세그먼트가 참조하는 extra 소재(speed·canvas·effects…)를 복제해 새로 물린다.
+
+    원본은 세그먼트마다 extra 를 독점한다(공유 0개). 프로토타입을 복제하면서 참조를
+    그대로 두면 여러 세그먼트가 같은 소재를 가리키게 되는데, 그러면 캡컷에서 미리보기
+    재생이 안 된다(실측).
+    """
+    refs = seg.get("extra_material_refs")
+    if not isinstance(refs, list):
+        return
+    fresh = []
+    for ref in refs:
+        found = index.get(ref)
+        if not found:
+            fresh.append(ref)
+            continue
+        key, mat = found
+        copied = copy.deepcopy(mat)
+        copied["id"] = _uid()
+        mats.setdefault(key, []).append(copied)
+        index[copied["id"]] = (key, copied)
+        fresh.append(copied["id"])
+    seg["extra_material_refs"] = fresh
+
+
 def _seg_from(proto: dict, material_id: str, start: float, dur: float,
               src_in: float = 0.0, src_dur: float | None = None,
-              speed: float = 1.0) -> dict:
+              speed: float = 1.0, index: dict | None = None,
+              mats: dict | None = None) -> dict:
     """target 은 타임라인에서 차지하는 시간, source 는 원본에서 소비하는 시간.
     배속을 걸면 source = target × speed 다."""
     seg = copy.deepcopy(proto)
     seg["id"] = _uid()
     seg["material_id"] = material_id
+    if index is not None and mats is not None:
+        _clone_extras(seg, index, mats)
     seg["target_timerange"] = {"start": round(start * US), "duration": round(dur * US)}
     if seg.get("source_timerange") is not None:
         seg["source_timerange"] = {"start": round(src_in * US),
@@ -339,6 +378,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         raise RuntimeError(f"템플릿 {src_dir.name} 에 영상/자막 견본이 없다")
 
     mats = raw["materials"]
+    index = _index_materials(mats)
     videos, texts, audios = [], [], []
     v_track, t_tracks, a_track = [], {}, []
 
@@ -355,7 +395,8 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             vm["material_name"] = Path(c.src).name
             vm["duration"] = round((c.src_len or dur) * US)
         videos.append(vm)
-        v_track.append(_seg_from(vs_proto, vm["id"], start, dur, c.src_in))
+        v_track.append(_seg_from(vs_proto, vm["id"], start, dur, c.src_in,
+                                 index=index, mats=mats))
 
         # 자막 3층
         for kind, text in (("main", c.text), ("clock", c.clock), ("aside", c.aside)):
@@ -372,7 +413,8 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
                     style["range"] = [0, len(text)]
             tm["content"] = json.dumps(content, ensure_ascii=False)
             texts.append(tm)
-            t_tracks.setdefault(kind, []).append(_seg_from(ts_proto, tm["id"], start, dur))
+            t_tracks.setdefault(kind, []).append(
+                _seg_from(ts_proto, tm["id"], start, dur, index=index, mats=mats))
 
         # 녹음 — 원본 파일을 참조하고 잘라 쓴 구간만 source_timerange 로 지정
         if c.rec and protos["audio"] and c.rec_out > c.rec_in and not getattr(timeline, "voice_source", None):
@@ -386,7 +428,8 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             audios.append(am)
             spoken = c.rec_out - c.rec_in
             a_track.append(_seg_from(as_proto, am["id"], start, spoken / c.speed,
-                                     c.rec_in, spoken, speed=c.speed))
+                                     c.rec_in, spoken, speed=c.speed,
+                                     index=index, mats=mats))
 
     # 역방향 모드: 목소리 트랙은 원본 프로젝트에서 통째로 옮긴다 (다시 만들지 않는다)
     passthrough = voice_passthrough(timeline.voice_source) if getattr(timeline, "voice_source", None) else None
@@ -433,6 +476,51 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         meta["tm_draft_modified"] = now
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return dst_dir
+
+
+def validate_draft(name_or_path: str | Path) -> list[str]:
+    """쓴 드래프트가 캡컷이 받아들일 모양인지 확인한다.
+
+    실측으로 걸린 것들: extra 소재(speed·canvas·effects)를 여러 세그먼트가 공유하면
+    미리보기 재생이 안 된다. 끊긴 참조나 영상 트랙의 틈도 마찬가지로 위험하다.
+    """
+    root = draft_dir(name_or_path)
+    raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
+    ids = set(_index_materials(raw.get("materials") or {}))
+    problems: list[str] = []
+
+    dangling, seen = 0, {}
+    for track in raw["tracks"]:
+        for seg in track.get("segments") or []:
+            if seg.get("material_id") and seg["material_id"] not in ids:
+                dangling += 1
+            for ref in seg.get("extra_material_refs") or []:
+                if ref not in ids:
+                    dangling += 1
+                seen[ref] = seen.get(ref, 0) + 1
+    if dangling:
+        problems.append(f"끊긴 소재 참조 {dangling}개")
+    if shared := sum(1 for n in seen.values() if n > 1):
+        problems.append(f"여러 세그먼트가 공유하는 extra 소재 {shared}개 — 미리보기 재생이 안 된다")
+
+    for track in raw["tracks"]:
+        segs = sorted(track.get("segments") or [], key=lambda s: s["target_timerange"]["start"])
+        if track["type"] != "video" or len(segs) < 2:
+            continue
+        holes = sum(
+            1 for a, b in zip(segs, segs[1:])
+            if abs(b["target_timerange"]["start"]
+                   - (a["target_timerange"]["start"] + a["target_timerange"]["duration"])) > 1000
+        )
+        if holes:
+            problems.append(f"영상 트랙에 틈 {holes}개 — 검은 프레임이 낀다")
+
+    for path_key in ("videos", "audios"):
+        for mat in raw["materials"].get(path_key) or []:
+            p = _resolve(mat.get("path", ""), root)
+            if p and not p.exists():
+                problems.append(f"파일 없음: {p.name}")
+    return problems
 
 
 def _mtime(p: Path) -> float:
