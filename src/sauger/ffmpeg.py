@@ -63,6 +63,26 @@ def duration(path: Path) -> float:
     raise RuntimeError(f"길이를 못 읽음: {path}")
 
 
+_HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}   # PQ / HLG
+
+
+def is_hdr(path: Path) -> bool:
+    """아이폰으로 찍으면 클립마다 HDR 여부가 갈린다(Dolby Vision/HLG). 톤매핑 없이
+    변환하면 그 컷만 색이 뜬다."""
+    for s in probe(path).get("streams", []):
+        if s.get("codec_type") != "video":
+            continue
+        if s.get("color_transfer") in _HDR_TRANSFERS or s.get("color_primaries") == "bt2020":
+            return True
+    return False
+
+
+TONEMAP = (
+    "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+    "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+)
+
+
 def has_audio(path: Path) -> bool:
     return any(s.get("codec_type") == "audio" for s in probe(path).get("streams", []))
 

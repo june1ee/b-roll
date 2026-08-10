@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from . import assemble, capcut, project, render
+from . import ffmpeg as ff
 
 LOW_SCORE = 0.75
 
@@ -62,6 +63,15 @@ def cmd_build(args: argparse.Namespace) -> int:
     if over:
         print(f"⚠ 강조가 한 프레임에 둘 이상인 줄: "
               f"{', '.join(str(c.index) for c in over)} — 스타일 규칙상 하나만", file=sys.stderr)
+    emoji = [c for c in tl.clips
+             if any(t and render.strip_emoji(t) != t for t in (c.text, c.clock, c.aside))]
+    if emoji and not args.no_render:
+        print(f"· 미리보기에서 이모지를 뺀 줄: {', '.join(str(c.index) for c in emoji)} "
+              f"(libass 가 컬러 이모지를 못 그린다. 캡컷 드래프트에는 그대로 있다)", file=sys.stderr)
+    hdr = [c for c in tl.clips if c.src and ff.is_hdr(c.src)]
+    if hdr:
+        print(f"· HDR 소스라 SDR 로 톤매핑한 컷: {', '.join(str(c.index) for c in hdr)}",
+              file=sys.stderr)
     short = [c for c in tl.clips if c.src_short > 0.05]
     if short:
         print(f"⚠ 소스가 짧아 마지막 프레임으로 채운 줄: "
