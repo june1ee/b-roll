@@ -27,6 +27,7 @@ class Seg:
     end: float
     src: Path | None = None
     src_in: float = 0.0
+    src_dur: float = 0.0  # 원본에서 소비하는 길이 (= (end-start) × speed)
     speed: float = 1.0
     text: str | None = None
     kind: str = ""        # record | music | sound | text_to_audio | video | text
@@ -97,6 +98,7 @@ def read(name_or_path: str | Path) -> Draft:
                 start=(tr.get("start") or 0) / US,
                 end=((tr.get("start") or 0) + (tr.get("duration") or 0)) / US,
                 src_in=(sr.get("start") or 0) / US,
+                src_dur=(sr.get("duration") or 0) / US,
                 speed=float(s.get("speed") or 1.0),
             )
             mid = s.get("material_id")
@@ -213,6 +215,38 @@ def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
                 scale_y=float(scale.get("y") or 1.0),
             )
     return out
+
+
+VOICE_KINDS = ("record", "text_to_audio")
+
+
+def voice_segments(name_or_path: str | Path) -> list[Seg]:
+    """드래프트에서 목소리(녹음 또는 TTS) 세그먼트만 시간순으로.
+
+    June 이 캡컷에서 직접 녹음하고 속도까지 맞춰두면, 타이밍은 이미 확정된 것이다.
+    그걸 읽어 쓰는 쪽이 whisper 정렬로 추정하는 것보다 정확하다.
+    """
+    draft = read(name_or_path)
+    return [s for s in draft.audio if s.kind in VOICE_KINDS]
+
+
+def voice_passthrough(name_or_path: str | Path) -> tuple[list[dict], dict] | None:
+    """목소리 트랙을 통째로 들고 온다 (소재 + 트랙).
+
+    다시 만들지 않고 그대로 옮긴다 — TTS 의 보이스 정보, 볼륨, 페이드 같은 걸
+    재현하려 들면 반드시 뭔가 빠뜨린다.
+    """
+    root = draft_dir(name_or_path)
+    raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
+    auds = {a["id"]: a for a in raw["materials"].get("audios") or []}
+    for track in raw["tracks"]:
+        if track["type"] != "audio":
+            continue
+        ids = {s.get("material_id") for s in track.get("segments") or []}
+        mats = [auds[i] for i in ids if i in auds and auds[i].get("type") in VOICE_KINDS]
+        if mats and len(mats) == len(ids):
+            return mats, track
+    return None
 
 
 def voice_speed(template: str | Path) -> float:
@@ -341,7 +375,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             t_tracks.setdefault(kind, []).append(_seg_from(ts_proto, tm["id"], start, dur))
 
         # 녹음 — 원본 파일을 참조하고 잘라 쓴 구간만 source_timerange 로 지정
-        if c.rec and protos["audio"] and c.rec_out > c.rec_in:
+        if c.rec and protos["audio"] and c.rec_out > c.rec_in and not getattr(timeline, "voice_source", None):
             _, as_proto, am_proto = protos["audio"]
             am = copy.deepcopy(am_proto)
             am["id"] = _uid()
@@ -354,17 +388,25 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             a_track.append(_seg_from(as_proto, am["id"], start, spoken / c.speed,
                                      c.rec_in, spoken, speed=c.speed))
 
+    # 역방향 모드: 목소리 트랙은 원본 프로젝트에서 통째로 옮긴다 (다시 만들지 않는다)
+    passthrough = voice_passthrough(timeline.voice_source) if getattr(timeline, "voice_source", None) else None
+
     mats["videos"], mats["texts"] = videos, texts
-    if audios:
-        mats["audios"] = [a for a in mats.get("audios") or [] if a.get("type") != "record"] + audios
+    keep = [a for a in mats.get("audios") or [] if a.get("type") not in VOICE_KINDS]
+    if passthrough:
+        mats["audios"] = keep + passthrough[0]
+    elif audios:
+        mats["audios"] = keep + audios
 
     tracks = [dict(protos["video"][0], segments=v_track, id=_uid())]
     for kind, segs in t_tracks.items():
         tracks.append(dict(protos["text"][kind][0], segments=segs, id=_uid()))
-    if a_track:
+    if passthrough:
+        tracks.append(passthrough[1])
+    elif a_track:
         tracks.append(dict(protos["audio"][0], segments=a_track, id=_uid()))
     # 음악·효과음 등 우리가 안 건드리는 오디오 트랙은 그대로 살려둔다
-    kept_ids = {a["id"] for a in mats.get("audios") or [] if a.get("type") != "record"}
+    kept_ids = {a["id"] for a in keep}
     for track in raw["tracks"]:
         if track["type"] == "audio" and any(
                 s.get("material_id") in kept_ids for s in track.get("segments") or []):
