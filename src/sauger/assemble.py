@@ -48,6 +48,7 @@ class Timeline:
     reel: Reel
     clips: list[Clip] = field(default_factory=list)
     speed: float = 1.0
+    voice_source: str | None = None   # 목소리를 가져온 캡컷 프로젝트 (역방향 모드)
 
     @property
     def duration(self) -> float:
@@ -81,6 +82,45 @@ class Timeline:
                 for c in self.clips
             ],
         }
+
+
+def from_capcut(reel: Reel, source: str) -> Timeline:
+    """캡컷에서 이미 녹음·속도 조절까지 끝낸 프로젝트를 받아 타임라인을 만든다.
+
+    타이밍은 추정하지 않는다 — June 이 캡컷에서 확정한 값을 그대로 쓴다.
+    정렬(whisper)도 배속 추론도 필요 없고, TTS 로 만든 경우에도 똑같이 동작한다.
+    n번째 목소리 세그먼트 ↔ n번째 줄로 짝짓는다.
+    """
+    voices = capcut.voice_segments(source)
+    if not voices:
+        raise ValueError(f"'{source}' 에 녹음/TTS 세그먼트가 없다")
+    if len(voices) != len(reel.lines):
+        raise ValueError(
+            f"줄 수가 안 맞는다 — yml {len(reel.lines)}줄 vs '{source}' 목소리 {len(voices)}개.\n"
+            f"  한 줄에 목소리 하나씩 1:1 이어야 한다."
+        )
+
+    tl = Timeline(reel=reel, voice_source=source)
+    tl.speed = round(sum(v.speed for v in voices) / len(voices), 3)
+    for i, (line, v) in enumerate(zip(reel.lines, voices), 1):
+        clip = Clip(
+            index=i, text=line.t,
+            tl_start=v.start, tl_end=v.end,
+            rec=v.src, rec_in=v.src_in, rec_out=v.src_in + v.src_dur,
+            score=1.0, coverage=1.0, tightened=False, speed=v.speed,
+            src=line.src, clock=line.clock, aside=line.aside,
+        )
+        if line.src:
+            src_len = ff.duration(line.src)
+            slack = max(src_len - clip.duration, 0.0)
+            start = (line.frm if line.frm is not None
+                     else 0.0 if line.fit == "start"
+                     else slack if line.fit == "end" else slack / 2)
+            clip.src_in = max(0.0, min(start, slack))
+            clip.src_len = src_len
+            clip.src_short = max(0.0, clip.duration - (src_len - clip.src_in))
+        tl.clips.append(clip)
+    return tl
 
 
 def build(reel: Reel, *, on_progress=None) -> Timeline:
