@@ -17,7 +17,13 @@ _START = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _END = re.compile(r"silence_end:\s*(-?[\d.]+)")
 
 
-def speech_spans(audio: Path, *, noise_db: int = -32, min_silence: float = 0.15,
+# -32dB 로는 한국어 어미("~요", "~죠")처럼 조용히 흘리는 문장 끝을 잘라먹는다.
+# 0806 정답지에 맞춰 훑어본 결과 -42dB 에서 끝 경계 오차가 0.72s → 0.11s 로 떨어졌다.
+# 더 낮추면(-46dB) 숨소리까지 발화로 잡아 테이크 구분이 무너진다.
+DEFAULT_NOISE_DB = -42
+
+
+def speech_spans(audio: Path, *, noise_db: int = DEFAULT_NOISE_DB, min_silence: float = 0.15,
                  min_speech: float = 0.15) -> list[tuple[float, float]]:
     """[(start, end), ...] 발화 구간. 아무것도 못 찾으면 파일 전체 한 덩어리."""
     if not shutil.which("ffmpeg"):
