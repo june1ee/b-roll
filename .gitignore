@@ -1,0 +1,7 @@
+.sauger/
+.serena/
+.venv/
+__pycache__/
+*.pyc
+uv.lock
+*-preview.mp4
