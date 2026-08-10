@@ -19,6 +19,24 @@ def _fmt(seconds: float) -> str:
     return f"{int(m)}:{s:05.2f}"
 
 
+def _collect_notes(tl, reverse: bool) -> dict[int, list[str]]:
+    """컷별로 눈으로 알아야 할 것들. 터미널이 아니라 스토리보드에 박힌다."""
+    notes: dict[int, list[str]] = {}
+    for c in tl.clips:
+        flags = []
+        if c.src and ff.is_hdr(c.src):
+            flags.append("HDR→SDR")
+        if any(t and render.strip_emoji(t) != t for t in (c.text, c.clock, c.aside)):
+            flags.append("이모지 미리보기만 제외")
+        if c.src_short > 0.05:
+            flags.append(f"소스 {c.src_short:.1f}s 부족")
+        if not reverse and c.rec and c.score < LOW_SCORE:
+            flags.append("정렬 불확실")
+        if flags:
+            notes[c.index] = flags
+    return notes
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     reel = project.load(Path(args.reel))
     work = reel.root / ".sauger" / reel.path.stem
@@ -63,15 +81,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     if over:
         print(f"⚠ 강조가 한 프레임에 둘 이상인 줄: "
               f"{', '.join(str(c.index) for c in over)} — 스타일 규칙상 하나만", file=sys.stderr)
-    emoji = [c for c in tl.clips
-             if any(t and render.strip_emoji(t) != t for t in (c.text, c.clock, c.aside))]
-    if emoji and not args.no_render:
-        print(f"· 미리보기에서 이모지를 뺀 줄: {', '.join(str(c.index) for c in emoji)} "
-              f"(libass 가 컬러 이모지를 못 그린다. 캡컷 드래프트에는 그대로 있다)", file=sys.stderr)
-    hdr = [c for c in tl.clips if c.src and ff.is_hdr(c.src)]
-    if hdr:
-        print(f"· HDR 소스라 SDR 로 톤매핑한 컷: {', '.join(str(c.index) for c in hdr)}",
-              file=sys.stderr)
+    notes = _collect_notes(tl, reverse)
     short = [c for c in tl.clips if c.src_short > 0.05]
     if short:
         print(f"⚠ 소스가 짧아 마지막 프레임으로 채운 줄: "
@@ -97,7 +107,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"\r  렌더 {stage} {i}/{n}   ", end="", file=sys.stderr, flush=True)
 
     render.render(tl, out, work=work, on_progress=render_progress)
-    board = render.storyboard(tl, out, work / "storyboard.png")
+    board = render.storyboard(tl, out, work / "storyboard.png", notes=notes)
     print(f"\n완료 → {out}", file=sys.stderr)
     print(f"스토리보드 → {board}", file=sys.stderr)
     print(f"타임라인 → {timeline_json}", file=sys.stderr)
