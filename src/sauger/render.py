@@ -86,17 +86,48 @@ def render(tl: Timeline, out: Path, *, work: Path, on_progress=None) -> Path:
     return out
 
 
-def storyboard(tl: Timeline, video: Path, dst: Path, *, cols: int = 4, thumb_w: int = 360) -> Path:
-    """컷마다 한 프레임씩 뽑아 한 장으로. 영상을 다 안 봐도 '3번이 이상한데'가 판단된다."""
+def _label_font() -> str | None:
+    for p in (Path.home() / "Library/Fonts/Pretendard-Medium.otf",
+              Path("/System/Library/Fonts/AppleSDGothicNeo.ttc")):
+        if p.exists():
+            return str(p)
+    return None
+
+
+def _dt_escape(text: str) -> str:
+    for ch in ("\\", ":", "'", "%"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
+def storyboard(tl: Timeline, video: Path, dst: Path, *,
+               cols: int = 4, thumb_w: int = 360,
+               notes: dict[int, list[str]] | None = None) -> Path:
+    """컷마다 한 프레임씩 뽑아 한 장으로.
+
+    경고를 터미널에 찍어봐야 안 읽힌다. 어차피 열어보는 이 그림 위에 박아둔다.
+    """
+    notes = notes or {}
     frames = dst.parent / "frames"
     frames.mkdir(parents=True, exist_ok=True)
     for old in frames.glob("*.png"):
         old.unlink()
+    font = _label_font()
     total = ff.duration(video)
+
     for c in tl.clips:
         at = min(c.tl_start + min(0.35, c.duration / 3), max(total - 0.05, 0.0))
+        label = f"{c.index}  {c.duration:.1f}s"
+        if flags := notes.get(c.index):
+            label += "   " + " · ".join(flags)
+        vf = f"scale={thumb_w}:-2"
+        if font:
+            vf += (f",drawtext=fontfile='{font}':text='{_dt_escape(label)}'"
+                   f":fontcolor=white:fontsize=20:box=1:boxcolor=0x000000C0:boxborderw=8"
+                   f":x=12:y=12")
         ff.ffmpeg("-ss", f"{at:.3f}", "-i", str(video), "-frames:v", "1",
-                  "-vf", f"scale={thumb_w}:-2", str(frames / f"{c.index:03d}.png"))
+                  "-vf", vf, str(frames / f"{c.index:03d}.png"))
+
     ff.ffmpeg("-pattern_type", "glob", "-i", str(frames / "*.png"),
               "-filter_complex", f"tile={cols}x{-(-len(tl.clips) // cols)}:margin=10:padding=10:color=0x14181F",
               "-frames:v", "1", str(dst))
