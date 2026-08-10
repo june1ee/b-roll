@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import align, asr, vad
+from . import align, asr, capcut, vad
 from . import ffmpeg as ff
 from .project import Reel
 
@@ -30,6 +30,7 @@ class Clip:
     takes: int = 1              # 녹음 안에서 검출된 테이크 수
     coverage: float = 0.0       # 자막이 들린 말의 몇 %를 덮는가
     tightened: bool = False     # 텍스트로 좁혔는지 (아니면 테이크 통째)
+    speed: float = 1.0          # 목소리 배속
     src: Path | None = None
     src_in: float = 0.0
     src_len: float = 0.0        # 러프컷 원본 길이
@@ -46,6 +47,7 @@ class Clip:
 class Timeline:
     reel: Reel
     clips: list[Clip] = field(default_factory=list)
+    speed: float = 1.0
 
     @property
     def duration(self) -> float:
@@ -56,6 +58,7 @@ class Timeline:
             "source": str(self.reel.path),
             "size": [self.reel.width, self.reel.height],
             "fps": self.reel.fps,
+            "speed": round(self.speed, 3),
             "duration": round(self.duration, 3),
             "clips": [
                 {
@@ -67,6 +70,7 @@ class Timeline:
                     "takes": c.takes,
                     "coverage": round(c.coverage, 3),
                     "tightened": c.tightened,
+                    "speed": round(c.speed, 3),
                     "src": str(c.src) if c.src else None,
                     "src_in": round(c.src_in, 3),
                     "src_len": round(c.src_len, 3),
@@ -82,12 +86,16 @@ class Timeline:
 def build(reel: Reel, *, on_progress=None) -> Timeline:
     tl = Timeline(reel=reel)
     cursor = 0.0
+    # 목소리 배속은 포맷마다 다르다. yml 에 없으면 템플릿이 쓰던 값을 그대로 쓴다.
+    default_speed = reel.speed or (capcut.voice_speed(reel.template) if reel.template else 1.0)
+    tl.speed = default_speed
 
     for i, line in enumerate(reel.lines, 1):
         if on_progress:
             on_progress(i, len(reel.lines), line.t)
 
         takes, coverage, tightened = 1, 0.0, False
+        speed = line.speed if line.speed else default_speed
         if line.rec:
             # 원본(ADTS AAC 등) 대신 디코드된 wav 를 기준으로 잰다 — 길이가 정확해야 A/V 가 안 밀린다
             wav = ff.cached_wav(line.rec)
@@ -99,18 +107,18 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
             rec_out = min(span.end + TAIL_PAD, rec_len)
             score, takes = span.score, span.takes
             coverage, tightened = span.coverage, span.tightened
-            dur = max(rec_out - rec_in, MIN_LINE)
+            dur = max((rec_out - rec_in) / speed, MIN_LINE)
         else:
             rec_in = rec_out = score = coverage = 0.0
             tightened = False
-            dur = max(len(line.t) / CHARS_PER_SEC, MIN_LINE)
+            dur = max(len(line.t) / (CHARS_PER_SEC * speed), MIN_LINE)
 
         dur += line.hold
         clip = Clip(
             index=i, text=line.t,
             tl_start=cursor, tl_end=cursor + dur,
             rec=line.rec, rec_in=rec_in, rec_out=rec_out, score=score, takes=takes,
-            coverage=coverage, tightened=tightened,
+            coverage=coverage, tightened=tightened, speed=speed,
             src=line.src, clock=line.clock, aside=line.aside,
         )
 

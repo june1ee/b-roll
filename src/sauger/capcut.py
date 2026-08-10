@@ -215,6 +215,27 @@ def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
     return out
 
 
+def voice_speed(template: str | Path) -> float:
+    """템플릿이 목소리에 걸어둔 배속(중앙값).
+
+    실측: 0806 은 1.30~1.50(평균 1.34), 0703 은 1.10~1.26, 0718(TTS) 은 1.5~2.0.
+    포맷마다 템포가 다르니 값을 박아두지 않고 템플릿에서 읽는다.
+    """
+    root = draft_dir(template)
+    raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
+    auds = {a["id"]: a for a in raw["materials"].get("audios") or []}
+    speeds = [
+        float(s.get("speed") or 1.0)
+        for track in raw["tracks"] if track["type"] == "audio"
+        for s in track.get("segments") or []
+        if (auds.get(s.get("material_id")) or {}).get("type") in ("record", "text_to_audio")
+    ]
+    if not speeds:
+        return 1.0
+    speeds.sort()
+    return round(speeds[len(speeds) // 2], 3)
+
+
 def _uid() -> str:
     return str(uuid.uuid4()).upper()
 
@@ -247,15 +268,18 @@ def _prototypes(raw: dict) -> dict:
 
 
 def _seg_from(proto: dict, material_id: str, start: float, dur: float,
-              src_in: float = 0.0, src_dur: float | None = None) -> dict:
+              src_in: float = 0.0, src_dur: float | None = None,
+              speed: float = 1.0) -> dict:
+    """target 은 타임라인에서 차지하는 시간, source 는 원본에서 소비하는 시간.
+    배속을 걸면 source = target × speed 다."""
     seg = copy.deepcopy(proto)
     seg["id"] = _uid()
     seg["material_id"] = material_id
     seg["target_timerange"] = {"start": round(start * US), "duration": round(dur * US)}
     if seg.get("source_timerange") is not None:
         seg["source_timerange"] = {"start": round(src_in * US),
-                                   "duration": round((src_dur if src_dur is not None else dur) * US)}
-    seg["speed"] = 1.0
+                                   "duration": round((src_dur if src_dur is not None else dur * speed) * US)}
+    seg["speed"] = round(speed, 4)
     for key in ("common_keyframes", "keyframe_refs"):
         if isinstance(seg.get(key), list):
             seg[key] = []
@@ -327,7 +351,8 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             am["duration"] = round(ffprobe_duration(Path(c.rec)) * US)
             audios.append(am)
             spoken = c.rec_out - c.rec_in
-            a_track.append(_seg_from(as_proto, am["id"], start, min(dur, spoken), c.rec_in, spoken))
+            a_track.append(_seg_from(as_proto, am["id"], start, spoken / c.speed,
+                                     c.rec_in, spoken, speed=c.speed))
 
     mats["videos"], mats["texts"] = videos, texts
     if audios:
