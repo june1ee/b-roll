@@ -95,6 +95,11 @@ def cmd_build(args: argparse.Namespace) -> int:
             return 1
         out_dir = capcut.write_draft(reel.template, args.capcut, tl, overwrite=args.overwrite)
         print(f"\n캡컷 드래프트 → {out_dir}", file=sys.stderr)
+        if problems := capcut.validate_draft(out_dir):
+            for p in problems:
+                print(f"  ⚠ {p}", file=sys.stderr)
+        else:
+            print("  자체 검사 통과 (참조·트랙 연속성·파일 존재)", file=sys.stderr)
         print("  캡컷을 껐다 켜면 목록에 뜬다. 음악·TTS 는 거기서 얹으면 돼.", file=sys.stderr)
 
     if args.no_render:
