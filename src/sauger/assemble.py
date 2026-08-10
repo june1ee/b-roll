@@ -12,8 +12,9 @@ from .project import Reel
 # 녹음이 없는 줄의 길이 추정치. 한국어 낭독 속도 대략값이라 어디까지나 임시.
 CHARS_PER_SEC = 5.5
 MIN_LINE = 0.8
-LEAD_PAD = 0.06   # 발화 시작 직전을 조금 남긴다 (숨소리까지 자르면 부자연스럽다)
-TAIL_PAD = 0.10
+# 말이 씹히는 것보다 조금 긴 게 낫다 — 여백은 나중에 줄일 수 있지만 잘린 음절은 못 되살린다
+LEAD_PAD = 0.12
+TAIL_PAD = 0.25
 
 
 @dataclass
@@ -31,7 +32,10 @@ class Clip:
     tightened: bool = False     # 텍스트로 좁혔는지 (아니면 테이크 통째)
     src: Path | None = None
     src_in: float = 0.0
+    src_len: float = 0.0        # 러프컷 원본 길이
     src_short: float = 0.0      # 소스가 모자라 프리즈로 때운 시간
+    clock: str | None = None    # 시각 레이어
+    aside: str | None = None    # 괄호 부연 레이어
 
     @property
     def duration(self) -> float:
@@ -65,7 +69,10 @@ class Timeline:
                     "tightened": c.tightened,
                     "src": str(c.src) if c.src else None,
                     "src_in": round(c.src_in, 3),
+                    "src_len": round(c.src_len, 3),
                     "src_short": round(c.src_short, 3),
+                    "clock": c.clock,
+                    "aside": c.aside,
                 }
                 for c in self.clips
             ],
@@ -104,14 +111,24 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
             tl_start=cursor, tl_end=cursor + dur,
             rec=line.rec, rec_in=rec_in, rec_out=rec_out, score=score, takes=takes,
             coverage=coverage, tightened=tightened,
-            src=line.src,
+            src=line.src, clock=line.clock, aside=line.aside,
         )
 
         if line.src:
+            # 러프컷 다듬기: June 이 넉넉하게 잘라 준 클립에서 필요한 길이만큼만 남긴다.
+            # 러프컷은 보통 앞뒤에 여유를 두므로 기본은 가운데 정렬.
             src_len = ff.duration(line.src)
-            want = line.frm if line.frm is not None else 0.0
-            # M3에서 컷 선택이 이 값을 대체한다. 지금은 지정값 또는 0에서 시작.
-            clip.src_in = max(0.0, min(want, max(src_len - dur, 0.0)))
+            slack = max(src_len - dur, 0.0)
+            if line.frm is not None:
+                start = line.frm
+            elif line.fit == "start":
+                start = 0.0
+            elif line.fit == "end":
+                start = slack
+            else:
+                start = slack / 2
+            clip.src_in = max(0.0, min(start, slack))
+            clip.src_len = src_len
             clip.src_short = max(0.0, dur - (src_len - clip.src_in))
 
         tl.clips.append(clip)

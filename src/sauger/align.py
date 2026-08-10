@@ -17,8 +17,10 @@ from dataclasses import dataclass
 from .asr import Char
 
 _KEEP = re.compile(r"[0-9A-Za-z가-힣ㄱ-ㆎ]")
-STRONG_MATCH = 0.80   # 자막을 대사 그대로 쓴 것으로 볼 하한
-MIN_COVERAGE = 0.60   # 매칭 구간이 들린 말의 이만큼은 덮어야 '전사'로 본다
+# 텍스트로 구간을 좁히는 건 말을 잘라먹을 위험이 있어서, 자막이 사실상 대사 전문일 때만 한다.
+# 실측: coverage 0.70 에서 좁혔더니 "…출근하는"이 "…출근한"에서 잘렸다.
+STRONG_MATCH = 0.85
+MIN_COVERAGE = 0.85
 
 
 @dataclass

@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import assemble, project, render
+from . import assemble, capcut, project, render
 
 LOW_SCORE = 0.75
 
@@ -57,8 +57,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"⚠ 소스가 짧아 마지막 프레임으로 채운 줄: "
               f"{', '.join(f'{c.index}({c.src_short:.1f}s)' for c in short)}", file=sys.stderr)
 
+    if args.capcut:
+        if not reel.template:
+            print("오류: yml 에 template: <캡컷 프로젝트 이름> 이 필요하다", file=sys.stderr)
+            return 1
+        out_dir = capcut.write_draft(reel.template, args.capcut, tl, overwrite=args.overwrite)
+        print(f"\n캡컷 드래프트 → {out_dir}", file=sys.stderr)
+        print("  캡컷을 껐다 켜면 목록에 뜬다. 음악·TTS 는 거기서 얹으면 돼.", file=sys.stderr)
+
     if args.no_render:
-        print(f"\n타임라인만 씀 → {timeline_json}", file=sys.stderr)
+        print(f"타임라인 → {timeline_json}", file=sys.stderr)
         return 0
 
     out = Path(args.out) if args.out else reel.root / f"{reel.path.stem}-preview.mp4"
@@ -82,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("reel", help="릴스 정의 yml 경로")
     b.add_argument("-o", "--out", help="출력 mp4 경로")
     b.add_argument("--no-render", action="store_true", help="타임라인만 계산하고 렌더는 생략")
+    b.add_argument("--capcut", metavar="이름", help="캡컷 드래프트로 내보낸다 (template: 프로젝트를 복제)")
+    b.add_argument("--overwrite", action="store_true", help="같은 이름의 캡컷 프로젝트를 덮어쓴다")
     b.set_defaults(func=cmd_build)
 
     args = ap.parse_args(argv)
