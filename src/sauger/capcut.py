@@ -134,6 +134,87 @@ def classify_caption(text: str) -> str:
     return "main"
 
 
+@dataclass
+class CaptionStyle:
+    """템플릿에서 읽어낸 자막 한 층의 생김새. 미리보기 번인용으로 ASS 에 옮긴다."""
+    kind: str
+    family: str          # libass 가 찾을 폰트 패밀리
+    size: float          # 캡컷 글꼴 크기
+    color: str           # #RRGGBB
+    bold: bool
+    stroke: float        # 캡컷 stroke width (정규화값)
+    shadow_alpha: float  # 0~1
+    y: float             # 캡컷 transform.y
+    scale_x: float
+    scale_y: float
+
+    def y_px(self, height: int) -> float:
+        # 실측 보정: 캡컷 transform.y 는 화면 '절반' 높이 기준이다.
+        # (0806 의 세 레이어 -0.272/-0.442/-0.589 를 렌더 위치와 맞춰 확인)
+        return height / 2 * (1 - self.y)
+
+
+# 폰트 파일명 → libass 가 찾는 패밀리. fc-list 로 확인한 이름.
+_FAMILY = {
+    "Pretendard-Medium": "Pretendard Medium",
+    "Pretendard-Bold": "Pretendard",
+    "MemomentKkukkukk": "메모먼트꾹꾹체",
+}
+
+
+def _family_of(font_path: str) -> str:
+    stem = Path(font_path or "").stem
+    return _FAMILY.get(stem, stem.split("-")[0] or "Pretendard")
+
+
+def _hex(fill) -> str:
+    try:
+        r, g, b = (fill or {}).get("content", {}).get("solid", {}).get("color", [1, 1, 1])
+    except Exception:
+        r = g = b = 1.0
+    return "#%02X%02X%02X" % tuple(max(0, min(255, round(c * 255))) for c in (r, g, b))
+
+
+def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
+    """템플릿 프로젝트의 자막 층별 생김새를 읽는다.
+
+    미리보기에서 스타일을 손으로 정하려 들면 절대 못 맞춘다(실측으로 확인).
+    캡컷이 들고 있는 값을 그대로 가져오는 게 유일하게 맞는 방법이다.
+    """
+    root = draft_dir(template)
+    raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
+    texts = {t["id"]: t for t in raw["materials"].get("texts") or []}
+    out: dict[str, CaptionStyle] = {}
+    for track in raw["tracks"]:
+        if track["type"] != "text":
+            continue
+        for seg in track.get("segments") or []:
+            mat = texts.get(seg.get("material_id"))
+            if not mat:
+                continue
+            content = json.loads(mat.get("content") or "{}")
+            kind = classify_caption(content.get("text", ""))
+            if kind in out:
+                continue
+            style = (content.get("styles") or [{}])[0]
+            strokes = style.get("strokes") or [{}]
+            clip = seg.get("clip") or {}
+            scale = clip.get("scale") or {}
+            out[kind] = CaptionStyle(
+                kind=kind,
+                family=_family_of(mat.get("font_path", "")),
+                size=float(style.get("size") or mat.get("font_size") or 13),
+                color=_hex(style.get("fill")),
+                bold=bool(style.get("bold")),
+                stroke=float(strokes[0].get("width") or 0.017),
+                shadow_alpha=float(mat.get("shadow_alpha") or 0.12),
+                y=float((clip.get("transform") or {}).get("y") or 0.0),
+                scale_x=float(scale.get("x") or 1.0),
+                scale_y=float(scale.get("y") or 1.0),
+            )
+    return out
+
+
 def _uid() -> str:
     return str(uuid.uuid4()).upper()
 

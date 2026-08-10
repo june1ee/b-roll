@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from . import capcut
 from . import ffmpeg as ff
 from .assemble import Timeline
 
@@ -58,14 +59,16 @@ def render(tl: Timeline, out: Path, *, work: Path, on_progress=None) -> Path:
     work.mkdir(parents=True, exist_ok=True)
     reel = tl.reel
 
-    style = Style.load(reel.root)
     if not ff.has_filter("ass"):
         raise RuntimeError(
             "이 ffmpeg 빌드에 자막(ass) 필터가 없다. `brew install ffmpeg-full` 로 libass 포함 빌드를 깔아라."
         )
+    styles = capcut.caption_styles(reel.template) if reel.template else {}
+    if not styles:
+        raise RuntimeError("자막 스타일을 읽을 템플릿이 없다. yml 에 template: 을 넣어라.")
     audio = _audio_track(tl, work, on_progress)
     video = _video_track(tl, work, on_progress)
-    subs = _write_ass(tl, work / "subs.ass", style)
+    subs = _write_ass(tl, work / "subs.ass", styles, Style.load(reel.root).emphasis)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     if on_progress:
@@ -206,35 +209,13 @@ def _chunks(text: str) -> list[tuple[str, bool]]:
     return out or [(text, False)]
 
 
-def _split_at(plain: str) -> int | None:
-    """두 줄로 나눌 위치(평문 기준 인덱스). 나눌 필요 없으면 None."""
-    if len(plain) <= MAX_CHARS_PER_ROW:
-        return None
-    spaces = [i for i, c in enumerate(plain) if c == " "]
-    if not spaces:
-        return None
-    mid = len(plain) / 2
-    return min(spaces, key=lambda i: abs(i - mid))
-
-
-def _dialogue_text(text: str, style: Style) -> str:
-    """강조 색을 입히고 두 줄로 접은 ASS 텍스트."""
-    parts = _chunks(text)
-    plain = "".join(p for p, _ in parts)
-    split = _split_at(plain)
-    white, pink = _ass_color(style.color), _ass_color(style.emphasis)
-
-    out, idx = [], 0
-    for chunk, emph in parts:
-        piece = ""
-        for ch in chunk:
-            if split is not None and idx == split and ch == " ":
-                piece += r"\N"      # 줄바꿈 자리의 공백은 버린다
-            else:
-                piece += _escape_text(ch)
-            idx += 1
-        out.append(f"{{\\c{pink}}}{piece}{{\\c{white}}}" if emph else piece)
-    return "".join(out)
+def _dialogue_text(text: str, base_color: str, emphasis: str) -> str:
+    """강조 색만 입힌 ASS 텍스트. 자막은 한 줄로 간다 — 두 줄은 안 쓴다."""
+    base, pink = _ass_color(base_color), _ass_color(emphasis)
+    return "".join(
+        f"{{\\c{pink}}}{_escape_text(chunk)}{{\\c{base}}}" if emph else _escape_text(chunk)
+        for chunk, emph in _chunks(text)
+    )
 
 
 def _ts(seconds: float) -> str:
@@ -245,36 +226,46 @@ def _ts(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-_OUTLINE = {"none": 0.0, "hairline": 1.5, "thin": 2.2, "medium": 4.0, "thick": 6.5}
-_SHADOW = {"none": 0.0, "soft": 3.0, "strong": 5.0}
+# 캡컷 단위 → 픽셀 환산 상수. 0806 렌더를 눈으로 맞춰 잡은 값이라 정밀하진 않다.
+# 정확한 생김새는 캡컷 드래프트 쪽이 정답이고, 여기는 타이밍 확인용 근사치다.
+SIZE_K = 6.5   # 0806 캡컷 화면에서 메인 자막이 프레임 폭의 85% 인 것에 맞춰 보정
+OUTLINE_K = 176
+SHADOW_OFFSET = 3
 
 
-def _write_ass(tl: Timeline, dst: Path, style: Style) -> Path:
+def _write_ass(tl: Timeline, dst: Path, styles: dict, emphasis: str) -> Path:
     reel = tl.reel
-    size = int(reel.height * 0.039)
-    scale = reel.height / 1920
-    outline = round(_OUTLINE.get(style.outline, 2.2) * scale, 1)
-    shadow = round(_SHADOW.get(style.shadow, 3.0) * scale, 1)
-    head = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {reel.width}
-PlayResY: {reel.height}
-WrapStyle: 2
-ScaledBorderAndShadow: yes
-YCbCr Matrix: TV.709
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,{style.font},{size},{_ass_color(style.color)},&H000000FF,&H14000000,&HA0000000,1,0,0,0,100,100,0,0,1,{outline},{shadow},2,90,90,{style.margin_v},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    rows = [
-        f"Dialogue: 0,{_ts(c.tl_start)},{_ts(c.tl_end)},Main,,0,0,0,,{_dialogue_text(c.text, style)}"
-        for c in tl.clips
+    head = [
+        "[Script Info]", "ScriptType: v4.00+",
+        f"PlayResX: {reel.width}", f"PlayResY: {reel.height}",
+        "WrapStyle: 2", "ScaledBorderAndShadow: yes", "YCbCr Matrix: TV.709", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,"
+        " BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,"
+        " BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
     ]
-    dst.write_text(head + "\n".join(rows) + "\n", encoding="utf-8")
+    for kind, s in styles.items():
+        shadow_alpha = round(255 * (1 - s.shadow_alpha))
+        head.append(
+            f"Style: {kind},{s.family},{round(s.size * SIZE_K)},{_ass_color(s.color)},"
+            f"&H000000FF,&H14000000,&H{shadow_alpha:02X}000000,{1 if s.bold else 0},0,0,0,"
+            f"{round(s.scale_x * 100)},{round(s.scale_y * 100)},0,0,1,"
+            f"{round(s.stroke * OUTLINE_K, 1)},{SHADOW_OFFSET},5,0,0,0,1"
+        )
+    head += ["", "[Events]",
+             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
+
+    rows = []
+    for c in tl.clips:
+        for kind, text in (("main", c.text), ("clock", c.clock), ("aside", c.aside)):
+            s = styles.get(kind)
+            if not text or not s:
+                continue
+            pos = f"{{\\pos({reel.width / 2:.0f},{s.y_px(reel.height):.0f})}}"
+            body = _dialogue_text(text, s.color, emphasis)
+            rows.append(f"Dialogue: 0,{_ts(c.tl_start)},{_ts(c.tl_end)},{kind},,0,0,0,,{pos}{body}")
+
+    dst.write_text("\n".join(head + rows) + "\n", encoding="utf-8")
     return dst
 
 
