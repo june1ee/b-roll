@@ -119,9 +119,14 @@ def _audio_track(tl: Timeline, work: Path, on_progress) -> Path:
             fade_in = min(FADE_IN, spoken / 3)
             fade_out = min(FADE_OUT, spoken / 3)
             fade_out_at = max(spoken - fade_out, 0.0)
+            # -ss 는 -i 앞(입력 시킹)에 둔다. 뒤에 두면 필터에 들어가는 타임스탬프가
+            # 0 이 아니라 원본 절대 시각이라, afade 의 st 가 엉뚱한 지점에 걸려
+            # 세그먼트가 통째로 무음이 된다(실측). asetpts 로 한 번 더 못 박는다.
             ff.ffmpeg(
-                "-i", str(ff.cached_wav(clip.rec)), "-ss", f"{clip.rec_in:.3f}", "-t", f"{spoken:.3f}",
-                "-af", (f"afade=t=in:st=0:d={fade_in:.3f},"
+                "-ss", f"{clip.rec_in:.3f}", "-t", f"{spoken:.3f}",
+                "-i", str(ff.cached_wav(clip.rec)),
+                "-af", (f"asetpts=PTS-STARTPTS,"
+                        f"afade=t=in:st=0:d={fade_in:.3f},"
                         f"afade=t=out:st={fade_out_at:.3f}:d={fade_out:.3f},"
                         f"aresample={SAMPLE_RATE}"),
                 "-ac", "2", "-c:a", "pcm_s16le", str(seg),

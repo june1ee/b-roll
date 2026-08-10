@@ -13,10 +13,11 @@ class Line:
     t: str                      # 자막 텍스트
     rec: Path | None = None     # 이 줄 녹음
     src: Path | None = None     # 이 줄 영상 소스
-    frm: float | None = None    # 소스 인점(초). None이면 컷 선택에 맡김 (M3)
-    cuts: int | None = None     # 이 줄을 몇 컷으로 (M3)
+    frm: float | None = None    # 소스 인점(초). 지정하면 다듬기 없이 이 지점부터
+    fit: str = "center"         # 러프컷이 길 때 어디를 남길지: center | start | end
     hold: float = 0.0           # 줄 끝나고 더 유지할 시간
-    prefer: str | None = None   # 컷 선택 힌트 (M3)
+    clock: str | None = None    # 시각 레이어 (7:30 같은)
+    aside: str | None = None    # 괄호 부연 레이어
 
 
 @dataclass
@@ -71,10 +72,13 @@ def load(path: Path) -> Reel:
             rec=reel.resolve(item["rec"]) if item.get("rec") else None,
             src=reel.resolve(item["src"]) if item.get("src") else None,
             frm=float(item["from"]) if item.get("from") is not None else None,
-            cuts=int(item["cuts"]) if item.get("cuts") else None,
+            fit=str(item.get("fit", "center")),
             hold=float(item.get("hold", 0.0)),
-            prefer=item.get("prefer"),
+            clock=item.get("clock"),
+            aside=item.get("aside"),
         )
+        if line.fit not in ("center", "start", "end"):
+            raise ValueError(f"{path.name}: {i}번째 줄 fit 값이 이상하다 → {line.fit}")
         for label, p in (("rec", line.rec), ("src", line.src)):
             if p is not None and not p.exists():
                 raise FileNotFoundError(f"{path.name}: {i}번째 줄 {label} 파일 없음 → {p}")
