@@ -174,6 +174,8 @@ def _video_track(tl: Timeline, work: Path, on_progress) -> Path:
               f"crop={w}:{h},setsar=1,fps={fps}")
 
         if clip.src:
+            if ff.is_hdr(clip.src):
+                vf = f"{ff.TONEMAP},{vf}"
             if clip.src_short > 0.01:
                 vf += f",tpad=stop_mode=clone:stop_duration={clip.src_short + reel.gap + 0.1:.3f}"
             ff.ffmpeg("-ss", f"{clip.src_in:.3f}", "-i", str(clip.src),
@@ -231,8 +233,18 @@ def _ts(seconds: float) -> str:
 # 캡컷 단위 → 픽셀 환산 상수. 0806 렌더를 눈으로 맞춰 잡은 값이라 정밀하진 않다.
 # 정확한 생김새는 캡컷 드래프트 쪽이 정답이고, 여기는 타이밍 확인용 근사치다.
 SIZE_K = 6.5   # 0806 캡컷 화면에서 메인 자막이 프레임 폭의 85% 인 것에 맞춰 보정
-OUTLINE_K = 176
+OUTLINE_K = 88   # 캡컷 stroke 0.017 → 1.5px. 176 은 글자가 뭉개질 만큼 굵었다
 SHADOW_OFFSET = 3
+
+# libass 는 Apple Color Emoji(sbix 비트맵)를 못 쓴다. 폰트 폴백이 .LastResort 로
+# 떨어져서 두부(≡)가 찍힌다. 미리보기에서는 지우고, 캡컷 드래프트에는 그대로 남긴다.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF←-⯿☀-➿️‍⃣\U0001F1E6-\U0001F1FF]+"
+)
+
+
+def strip_emoji(text: str) -> str:
+    return _EMOJI.sub("", text).replace("  ", " ").strip()
 
 
 def _write_ass(tl: Timeline, dst: Path, styles: dict, emphasis: str) -> Path:
@@ -263,8 +275,11 @@ def _write_ass(tl: Timeline, dst: Path, styles: dict, emphasis: str) -> Path:
             s = styles.get(kind)
             if not text or not s:
                 continue
+            clean = strip_emoji(text)
+            if not clean:
+                continue
             pos = f"{{\\pos({reel.width / 2:.0f},{s.y_px(reel.height):.0f})}}"
-            body = _dialogue_text(text, s.color, emphasis)
+            body = _dialogue_text(clean, s.color, emphasis)
             rows.append(f"Dialogue: 0,{_ts(c.tl_start)},{_ts(c.tl_end)},{kind},,0,0,0,,{pos}{body}")
 
     dst.write_text("\n".join(head + rows) + "\n", encoding="utf-8")
