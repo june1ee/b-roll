@@ -274,6 +274,15 @@ def _uid() -> str:
     return str(uuid.uuid4()).upper()
 
 
+def _u16len(text: str) -> int:
+    """캡컷의 텍스트 스타일 range 는 UTF-16 코드 단위로 센다.
+
+    이모지(😡 등)는 UTF-16 에서 2단위라 파이썬 len() 으로 세면 범위가 모자라고,
+    빠진 부분만 기본 스타일로 그려져서 글자가 커지고 자막 위치가 틀어진다(실측).
+    """
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _prototypes(raw: dict) -> dict:
     """템플릿에서 종류별 '견본' 세그먼트+소재를 뽑는다.
 
@@ -410,7 +419,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             content["text"] = text
             for style in content.get("styles") or []:
                 if isinstance(style.get("range"), list) and len(style["range"]) == 2:
-                    style["range"] = [0, len(text)]
+                    style["range"] = [0, _u16len(text)]
             tm["content"] = json.dumps(content, ensure_ascii=False)
             texts.append(tm)
             t_tracks.setdefault(kind, []).append(
@@ -530,6 +539,19 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
         )
         if holes:
             problems.append(f"영상 트랙에 틈 {holes}개 — 검은 프레임이 낀다")
+
+    for mat in raw["materials"].get("texts") or []:
+        try:
+            content = json.loads(mat.get("content") or "{}")
+        except json.JSONDecodeError:
+            continue
+        want = _u16len(content.get("text", ""))
+        for style in content.get("styles") or []:
+            rng = style.get("range")
+            if isinstance(rng, list) and len(rng) == 2 and rng[1] != want:
+                problems.append(
+                    f"자막 스타일 범위가 글자 수와 안 맞는다 ({rng} vs {want}): "
+                    f"{content.get('text', '')[:16]!r} — 그 부분만 크기가 튄다")
 
     # 타임라인 id 고리: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
     project_path = root / "Timelines" / "project.json"
