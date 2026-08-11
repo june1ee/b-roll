@@ -52,6 +52,31 @@ def _ratio(value: str | None) -> tuple[int, int]:
     raise ValueError(f"모르는 ratio: {value} (지원: {', '.join(table)})")
 
 
+def from_draft(name: str, *, root: Path | None = None) -> Reel:
+    """yml 없이 캡컷 프로젝트만으로 릴스를 구성한다.
+
+    녹음·러프컷·자막을 전부 캡컷에서 넣어뒀을 때 쓴다. 목소리 세그먼트 하나가 한 줄이고,
+    같은 시각에서 시작하는 자막을 층별로 붙인다.
+    """
+    from . import capcut
+
+    draft = capcut.read(name)
+    voices = capcut.voice_segments(name)
+    if not voices:
+        raise ValueError(f"'{name}' 에 녹음/TTS 가 없다")
+    layers = capcut.caption_layers(draft)
+
+    reel = Reel(
+        path=(root or Path("reels")) / f"{name}.yml",
+        width=draft.width, height=draft.height, fps=int(draft.fps),
+        template=name,
+    )
+    for v in voices:
+        L = layers.get(round(v.start, 2), {})
+        reel.lines.append(Line(t=L.get("main", ""), clock=L.get("clock"), aside=L.get("aside")))
+    return reel
+
+
 def load(path: Path) -> Reel:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     w, h = _ratio(data.get("ratio"))

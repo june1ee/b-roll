@@ -38,7 +38,14 @@ def _collect_notes(tl, reverse: bool) -> dict[int, list[str]]:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    reel = project.load(Path(args.reel))
+    if args.reel:
+        reel = project.load(Path(args.reel))
+    elif args.from_capcut:
+        reel = project.from_draft(args.from_capcut)
+        print(f"yml 없이 캡컷 '{args.from_capcut}' 만으로 구성", file=sys.stderr)
+    else:
+        print("오류: 릴스 yml 을 주거나 --from-capcut 을 써라", file=sys.stderr)
+        return 1
     work = reel.root / ".sauger" / reel.path.stem
 
     def align_progress(i: int, n: int, text: str) -> None:
@@ -66,7 +73,10 @@ def cmd_build(args: argparse.Namespace) -> int:
         metric = f"{c.speed:>4.2f}x" if reverse else f"{c.score:>5.2f}"
         print(f"{c.index:>3}  {_fmt(c.tl_start)}~{_fmt(c.tl_end)}  {rec:>16}  "
               f"{metric}{flag}{c.text[:30]}", file=sys.stderr)
-    print(f"\n총 길이 {_fmt(tl.duration)}", file=sys.stderr)
+    speeds = sorted({round(c.speed, 2) for c in tl.clips})
+    where = "캡컷에서 건 값 그대로" if reverse else tl.speed_origin
+    label = f"{speeds[0]:.2f}x" if len(speeds) == 1 else f"{speeds[0]:.2f}~{speeds[-1]:.2f}x"
+    print(f"\n총 길이 {_fmt(tl.duration)} · 배속 {label} ({where})", file=sys.stderr)
 
     if not reverse:
         weak = [c for c in tl.clips if c.rec and c.score < LOW_SCORE]
@@ -169,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="릴스 yml → 타임라인 + 미리보기 mp4")
-    b.add_argument("reel", help="릴스 정의 yml 경로")
+    b.add_argument("reel", nargs="?", help="릴스 정의 yml 경로 (--from-capcut 만 쓸 거면 생략 가능)")
     b.add_argument("-o", "--out", help="출력 mp4 경로")
     b.add_argument("--no-render", action="store_true", help="타임라인만 계산하고 렌더는 생략")
     b.add_argument("--from-capcut", metavar="프로젝트",

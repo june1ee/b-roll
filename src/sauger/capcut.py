@@ -217,6 +217,16 @@ def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
     return out
 
 
+def caption_layers(draft: Draft) -> dict[float, dict[str, str]]:
+    """시작 시각별로 자막을 층(메인/시각/부연)으로 묶는다."""
+    out: dict[float, dict[str, str]] = {}
+    for t in draft.texts:
+        if t.text and t.text.strip():
+            out.setdefault(round(t.start, 2), {}).setdefault(
+                classify_caption(t.text), t.text.strip())
+    return out
+
+
 VOICE_KINDS = ("record", "text_to_audio")
 
 
