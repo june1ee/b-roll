@@ -48,6 +48,7 @@ class Timeline:
     reel: Reel
     clips: list[Clip] = field(default_factory=list)
     speed: float = 1.0
+    speed_origin: str = ""            # 배속을 어디서 정했는지
     voice_source: str | None = None   # 목소리를 가져온 캡컷 프로젝트 (역방향 모드)
 
     @property
@@ -84,6 +85,20 @@ class Timeline:
         }
 
 
+def _fit_pool(pool_start: float, pool_len: float, want: float, line) -> tuple[float, float]:
+    """러프컷이 잡아둔 구간(pool) 안에서 want 만큼만 남긴다. 모자란 만큼도 같이 반환."""
+    slack = max(pool_len - want, 0.0)
+    if line.frm is not None:
+        offset = line.frm
+    elif line.fit == "start":
+        offset = 0.0
+    elif line.fit == "end":
+        offset = slack
+    else:
+        offset = slack / 2
+    return pool_start + max(0.0, min(offset, slack)), max(0.0, want - pool_len)
+
+
 def from_capcut(reel: Reel, source: str) -> Timeline:
     """캡컷에서 이미 녹음·속도 조절까지 끝낸 프로젝트를 받아 타임라인을 만든다.
 
@@ -100,6 +115,14 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
             f"  한 줄에 목소리 하나씩 1:1 이어야 한다."
         )
 
+    # 러프컷을 캡컷 영상 트랙에 올려뒀으면 그걸 소스 풀로 쓴다 (파일 경로를 yml 에 안 적어도 된다)
+    rough = capcut.read(source).video
+    if rough and not any(l.src for l in reel.lines) and len(rough) != len(voices):
+        raise ValueError(
+            f"'{source}' 의 영상 {len(rough)}개와 목소리 {len(voices)}개가 안 맞는다.\n"
+            f"  한 줄에 러프컷 하나씩 1:1 로 올려두거나, yml 에 src 를 적어라."
+        )
+
     tl = Timeline(reel=reel, voice_source=source)
     tl.speed = round(sum(v.speed for v in voices) / len(voices), 3)
     for i, (line, v) in enumerate(zip(reel.lines, voices), 1):
@@ -110,15 +133,14 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
             score=1.0, coverage=1.0, tightened=False, speed=v.speed,
             src=line.src, clock=line.clock, aside=line.aside,
         )
-        if line.src:
-            src_len = ff.duration(line.src)
-            slack = max(src_len - clip.duration, 0.0)
-            start = (line.frm if line.frm is not None
-                     else 0.0 if line.fit == "start"
-                     else slack if line.fit == "end" else slack / 2)
-            clip.src_in = max(0.0, min(start, slack))
-            clip.src_len = src_len
-            clip.src_short = max(0.0, clip.duration - (src_len - clip.src_in))
+        if line.src:                                   # yml 이 지정한 파일 전체가 풀
+            clip.src_len = ff.duration(line.src)
+            clip.src_in, clip.src_short = _fit_pool(0.0, clip.src_len, clip.duration, line)
+        elif i <= len(rough) and rough[i - 1].src:      # 캡컷 영상 트랙의 러프컷이 풀
+            r = rough[i - 1]
+            clip.src = r.src
+            clip.src_len = r.src_dur or ff.duration(r.src)
+            clip.src_in, clip.src_short = _fit_pool(r.src_in, clip.src_len, clip.duration, line)
         tl.clips.append(clip)
     return tl
 
@@ -127,8 +149,15 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
     tl = Timeline(reel=reel)
     cursor = 0.0
     # 목소리 배속은 포맷마다 다르다. yml 에 없으면 템플릿이 쓰던 값을 그대로 쓴다.
-    default_speed = reel.speed or (capcut.voice_speed(reel.template) if reel.template else 1.0)
+    # (역방향 모드에서는 아예 추론하지 않고 캡컷에서 건 값을 읽는다)
+    if reel.speed:
+        default_speed, origin = reel.speed, "yml 지정"
+    elif reel.template:
+        default_speed, origin = capcut.voice_speed(reel.template), f"템플릿 {reel.template}"
+    else:
+        default_speed, origin = 1.0, "기본값"
     tl.speed = default_speed
+    tl.speed_origin = origin
 
     for i, line in enumerate(reel.lines, 1):
         if on_progress:
