@@ -119,6 +119,51 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    """캡컷 프로젝트를 읽어 릴스 yml 뼈대를 만든다. 줄 수와 길이는 녹음에서 가져온다."""
+    voices = capcut.voice_segments(args.project)
+    if not voices:
+        print(f"오류: '{args.project}' 에 녹음/TTS 가 없다. 캡컷에서 먼저 녹음해라.", file=sys.stderr)
+        return 1
+    draft = capcut.read(args.project)
+    # 이미 자막을 넣어뒀다면 층(메인/시각/부연)별로 나눠 채워준다
+    existing: dict[float, dict[str, str]] = {}
+    for t in draft.texts:
+        if t.text:
+            existing.setdefault(round(t.start, 2), {}).setdefault(
+                capcut.classify_caption(t.text), t.text.strip())
+
+    out = Path(args.out) if args.out else Path("reels") / f"{args.project}.yml"
+    if out.exists() and not args.overwrite:
+        print(f"오류: {out} 가 이미 있다 (--overwrite 로 덮어쓰기)", file=sys.stderr)
+        return 1
+
+    lines = [f"# {args.project} — 캡컷에서 녹음·속도까지 끝낸 프로젝트에서 뽑은 뼈대.",
+             f"# 줄 {len(voices)}개. t(자막)와 src(영상 소스)만 채우면 된다.",
+             f"template: {args.project}",
+             'ratio: "9:16"', "", "lines:"]
+    for i, v in enumerate(voices, 1):
+        layers = existing.get(round(v.start, 2), {})
+        q = lambda s: json.dumps(s, ensure_ascii=False)  # noqa: E731
+        lines += [
+            f"  # {i}. {v.start:5.2f}~{v.end:5.2f}s ({v.end - v.start:.2f}초, {v.speed:.2f}배속)",
+            f"  - t: {q(layers.get('main', ''))}",
+            "    src:            # 이 줄에 쓸 영상 (러프컷, 넉넉하게)",
+        ]
+        lines.append(f"    clock: {q(layers['clock'])}" if "clock" in layers
+                     else '    # clock: "7:30"   # 시각 레이어 (쓸 때만)')
+        lines.append(f"    aside: {q(layers['aside'])}" if "aside" in layers
+                     else '    # aside: "(부연)"  # 괄호 부연 (쓸 때만)')
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    print(f"만들었다 → {out}", file=sys.stderr)
+    print(f"  줄 {len(voices)}개 · 총 {voices[-1].end:.2f}초 · 배속 "
+          f"{min(v.speed for v in voices):.2f}~{max(v.speed for v in voices):.2f}x", file=sys.stderr)
+    print(f"  t 와 src 채운 뒤:  sauger build {out} --from-capcut {args.project}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="sauger", description="릴스 조립기")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -132,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--capcut", metavar="이름", help="캡컷 드래프트로 내보낸다 (template: 프로젝트를 복제)")
     b.add_argument("--overwrite", action="store_true", help="같은 이름의 캡컷 프로젝트를 덮어쓴다")
     b.set_defaults(func=cmd_build)
+
+    i = sub.add_parser("init", help="캡컷 프로젝트 → 릴스 yml 뼈대")
+    i.add_argument("project", help="캡컷 프로젝트 이름 (녹음이 들어있는 것)")
+    i.add_argument("-o", "--out", help="출력 yml 경로 (기본 reels/<프로젝트>.yml)")
+    i.add_argument("--overwrite", action="store_true")
+    i.set_defaults(func=cmd_init)
 
     args = ap.parse_args(argv)
     try:

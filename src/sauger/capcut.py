@@ -457,18 +457,34 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
     raw["tracks"] = tracks
 
     now = int(_mtime(src_dir) * 1_000_000)
-    raw["id"] = _uid()
-    raw["name"] = name
+    # draft_info.id 는 '타임라인 id' 다. Timelines/project.json 의 main_timeline_id 및
+    # Timelines/<id>/ 폴더명과 반드시 같아야 한다. 새로 만들면 캡컷이 메인 타임라인을
+    # 못 찾아 빈 탭을 띄우고 재생 길이가 0 이 된다(실측).
     raw["path"] = str(dst_dir / "draft_info.json")
     raw["duration"] = round(timeline.duration * US)
     raw["update_time"] = now
-    (dst_dir / "draft_info.json").write_text(
-        json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    body = json.dumps(raw, ensure_ascii=False)
+    (dst_dir / "draft_info.json").write_text(body, encoding="utf-8")
+
+    # 같은 내용을 하위 타임라인 문서에도 쓴다 (별개 파일이다)
+    project_path = dst_dir / "Timelines" / "project.json"
+    if project_path.exists():
+        pj = json.loads(project_path.read_text(encoding="utf-8"))
+        main_id = pj.get("main_timeline_id")
+        sub = dst_dir / "Timelines" / str(main_id) / "draft_info.json"
+        if main_id != raw.get("id"):
+            raise RuntimeError(
+                f"타임라인 id 불일치: draft_info.id={raw.get('id')} vs main_timeline_id={main_id}")
+        if sub.parent.exists():
+            sub.write_text(body, encoding="utf-8")
+        pj["id"] = _uid()          # 프로젝트 식별자는 새로 (템플릿과 겹치면 안 된다)
+        pj["update_time"] = now
+        project_path.write_text(json.dumps(pj, ensure_ascii=False), encoding="utf-8")
 
     meta_path = dst_dir / "draft_meta_info.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta["draft_id"] = raw["id"]
+        meta["draft_id"] = _uid()
         meta["draft_name"] = name
         meta["draft_fold_path"] = str(dst_dir)
         meta["draft_root_path"] = str(DRAFT_ROOT)
@@ -514,6 +530,21 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
         )
         if holes:
             problems.append(f"영상 트랙에 틈 {holes}개 — 검은 프레임이 낀다")
+
+    # 타임라인 id 고리: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
+    project_path = root / "Timelines" / "project.json"
+    if project_path.exists():
+        pj = json.loads(project_path.read_text(encoding="utf-8"))
+        main_id = pj.get("main_timeline_id")
+        if main_id != raw.get("id"):
+            problems.append(
+                f"타임라인 id 불일치 (draft_info.id={str(raw.get('id'))[:8]} vs "
+                f"main_timeline_id={str(main_id)[:8]}) — 재생이 안 된다")
+        sub = root / "Timelines" / str(main_id) / "draft_info.json"
+        if not sub.exists():
+            problems.append(f"하위 타임라인 문서 없음: Timelines/{str(main_id)[:8]}…/draft_info.json")
+        elif json.loads(sub.read_text(encoding="utf-8")).get("duration") != raw.get("duration"):
+            problems.append("루트와 하위 타임라인의 길이가 다르다 — 둘 다 써야 한다")
 
     for path_key in ("videos", "audios"):
         for mat in raw["materials"].get(path_key) or []:
