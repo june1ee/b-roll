@@ -167,6 +167,22 @@ def cmd_init(args: argparse.Namespace) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    if args.truth:
+        # 회귀 비교용 정답지. 개인 내용이라 저장소에 안 올린다 — 필요할 때 다시 뽑는다.
+        truth = [
+            {"i": i, "rec_in": round(v.src_in, 3), "rec_out": round(v.src_in + v.src_dur, 3),
+             "speed": round(v.speed, 3), "tl": [round(v.start, 3), round(v.end, 3)]}
+            for i, v in enumerate(voices, 1)
+        ]
+        for i, seg in enumerate(draft.video, 1):
+            if i <= len(truth):
+                truth[i - 1]["src"] = seg.src.name if seg.src else None
+                truth[i - 1]["src_in"] = round(seg.src_in, 3)
+        tp = out.parent.parent / "tests" / f"truth-{args.project}.json"
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tp.write_text(json.dumps(truth, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"정답지도 씀 → {tp}", file=sys.stderr)
+
     print(f"만들었다 → {out}", file=sys.stderr)
     print(f"  줄 {len(voices)}개 · 총 {voices[-1].end:.2f}초 · 배속 "
           f"{min(v.speed for v in voices):.2f}~{max(v.speed for v in voices):.2f}x", file=sys.stderr)
@@ -192,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("project", help="캡컷 프로젝트 이름 (녹음이 들어있는 것)")
     i.add_argument("-o", "--out", help="출력 yml 경로 (기본 reels/<프로젝트>.yml)")
     i.add_argument("--overwrite", action="store_true")
+    i.add_argument("--truth", action="store_true",
+                   help="회귀 비교용 정답지(tests/truth-<프로젝트>.json)도 같이 뽑는다")
     i.set_defaults(func=cmd_init)
 
     args = ap.parse_args(argv)

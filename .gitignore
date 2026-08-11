@@ -1,5 +1,12 @@
 .sauger/
 .serena/
+
+# 실제 릴스 정의와 정답지는 개인 내용(대본·시각·동선)이고 로컬 절대경로를 담는다.
+# 필요하면 `sauger init <캡컷프로젝트> --truth` 로 언제든 다시 뽑는다.
+reels/*
+!reels/example.yml
+tests/truth-*.json
+
 .venv/
 __pycache__/
 *.pyc
