@@ -1,4 +1,4 @@
-"""타임라인 조립 — 줄별 녹음을 트림해 이어 붙이고, 각 줄에 영상 구간을 배정한다."""
+"""타임라인 조립 - 줄별 녹음을 트림해 이어 붙이고, 각 줄에 영상 구간을 배정한다."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .project import Reel
 # 녹음이 없는 줄의 길이 추정치. 한국어 낭독 속도 대략값이라 어디까지나 임시.
 CHARS_PER_SEC = 5.5
 MIN_LINE = 0.8
-# 말이 씹히는 것보다 조금 긴 게 낫다 — 여백은 나중에 줄일 수 있지만 잘린 음절은 못 되살린다
+# 말이 씹히는 것보다 조금 긴 게 낫다 - 여백은 나중에 줄일 수 있지만 잘린 음절은 못 되살린다
 LEAD_PAD = 0.12
 TAIL_PAD = 0.25
 
@@ -102,7 +102,7 @@ def _fit_pool(pool_start: float, pool_len: float, want: float, line) -> tuple[fl
 def from_capcut(reel: Reel, source: str) -> Timeline:
     """캡컷에서 이미 녹음·속도 조절까지 끝낸 프로젝트를 받아 타임라인을 만든다.
 
-    타이밍은 추정하지 않는다 — June 이 캡컷에서 확정한 값을 그대로 쓴다.
+    타이밍은 추정하지 않는다 - June 이 캡컷에서 확정한 값을 그대로 쓴다.
     정렬(whisper)도 배속 추론도 필요 없고, TTS 로 만든 경우에도 똑같이 동작한다.
     n번째 목소리 세그먼트 ↔ n번째 줄로 짝짓는다.
     """
@@ -111,7 +111,7 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
         raise ValueError(f"'{source}' 에 녹음/TTS 세그먼트가 없다")
     if len(voices) != len(reel.lines):
         raise ValueError(
-            f"줄 수가 안 맞는다 — yml {len(reel.lines)}줄 vs '{source}' 목소리 {len(voices)}개.\n"
+            f"줄 수가 안 맞는다 - yml {len(reel.lines)}줄 vs '{source}' 목소리 {len(voices)}개.\n"
             f"  한 줄에 목소리 하나씩 1:1 이어야 한다."
         )
 
@@ -166,7 +166,7 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
         takes, coverage, tightened = 1, 0.0, False
         speed = line.speed if line.speed else default_speed
         if line.rec:
-            # 원본(ADTS AAC 등) 대신 디코드된 wav 를 기준으로 잰다 — 길이가 정확해야 A/V 가 안 밀린다
+            # 원본(ADTS AAC 등) 대신 디코드된 wav 를 기준으로 잰다 - 길이가 정확해야 A/V 가 안 밀린다
             wav = ff.cached_wav(line.rec)
             spans = vad.speech_spans(wav)
             chars = asr.transcribe(wav, lang=reel.lang)

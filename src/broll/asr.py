@@ -1,4 +1,4 @@
-"""whisper.cpp 래퍼 — 녹음 하나를 문자 단위 타임스탬프로 바꾼다.
+"""whisper.cpp 래퍼 - 녹음 하나를 문자 단위 타임스탬프로 바꾼다.
 
 정렬(align)에는 단어보다 문자 해상도가 편해서, whisper 토큰 구간 안에서
 문자별 시각을 선형 보간해 내보낸다. 한국어는 어절 경계가 모호해 문자 기준이 안전하다.
@@ -17,10 +17,10 @@ from pathlib import Path
 
 from . import ffmpeg as ff
 
-MODEL_DIR = Path(os.environ.get("SAUGER_MODEL_DIR", Path.home() / ".cache/sauger/models"))
-MODEL_NAME = os.environ.get("SAUGER_WHISPER_MODEL", "ggml-large-v3-turbo.bin")
+MODEL_DIR = Path(os.environ.get("BROLL_MODEL_DIR", Path.home() / ".cache/broll/models"))
+MODEL_NAME = os.environ.get("BROLL_WHISPER_MODEL", "ggml-large-v3-turbo.bin")
 MODEL_URL = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_NAME}"
-CACHE_DIR = Path(os.environ.get("SAUGER_CACHE_DIR", Path.home() / ".cache/sauger/asr"))
+CACHE_DIR = Path(os.environ.get("BROLL_CACHE_DIR", Path.home() / ".cache/broll/asr"))
 
 
 @dataclass(frozen=True)

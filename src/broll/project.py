@@ -28,7 +28,7 @@ class Reel:
     height: int = 1920
     fps: int = 30
     template: str | None = None   # 캡컷 템플릿 프로젝트 이름
-    # 줄 사이 간격. 기본 0 — June 의 타임라인은 컷과 음성이 1:1 로 딱 붙어 있다(실측 틈 0개).
+    # 줄 사이 간격. 기본 0 - June 의 타임라인은 컷과 음성이 1:1 로 딱 붙어 있다(실측 틈 0개).
     gap: float = 0.0
     speed: float | None = None    # 목소리 배속. None 이면 템플릿에서 읽는다
     lang: str = "ko"

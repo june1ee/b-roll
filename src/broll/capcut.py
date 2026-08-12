@@ -1,7 +1,7 @@
 """캡컷 드래프트(draft_info.json) 읽기.
 
 CapCut 9.x 는 draft_content.json 이 아니라 draft_info.json 을 쓰고, 평문 JSON이다.
-지금은 읽기 전용 — 기존 프로젝트에서 '정답 편집'을 뽑아 비교/템플릿 용도로 쓴다.
+지금은 읽기 전용 - 기존 프로젝트에서 '정답 편집'을 뽑아 비교/템플릿 용도로 쓴다.
 쓰기(M2)는 이 파일을 복제해 세그먼트만 교체하는 방식으로 붙인다.
 """
 
@@ -243,7 +243,7 @@ def voice_segments(name_or_path: str | Path) -> list[Seg]:
 def voice_passthrough(name_or_path: str | Path) -> tuple[list[dict], dict] | None:
     """목소리 트랙을 통째로 들고 온다 (소재 + 트랙).
 
-    다시 만들지 않고 그대로 옮긴다 — TTS 의 보이스 정보, 볼륨, 페이드 같은 걸
+    다시 만들지 않고 그대로 옮긴다 - TTS 의 보이스 정보, 볼륨, 페이드 같은 걸
     재현하려 들면 반드시 뭔가 빠뜨린다.
     """
     root = draft_dir(name_or_path)
@@ -387,7 +387,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             raise FileExistsError(f"이미 있는 캡컷 프로젝트다: {name} (덮어쓰려면 --overwrite)")
         shutil.rmtree(dst_dir)
     # 백업·임시 파일만 뺀다. 나머지는 뭐가 필요한지 확실치 않으니 통째로 가져간다.
-    # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 — 실측)
+    # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 - 실측)
     shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(
         "draft_info.json.bak", "template-*.tmp"))
 
@@ -435,7 +435,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             t_tracks.setdefault(kind, []).append(
                 _seg_from(ts_proto, tm["id"], start, dur, index=index, mats=mats))
 
-        # 녹음 — 원본 파일을 참조하고 잘라 쓴 구간만 source_timerange 로 지정
+        # 녹음 - 원본 파일을 참조하고 잘라 쓴 구간만 source_timerange 로 지정
         if c.rec and protos["audio"] and c.rec_out > c.rec_in and not getattr(timeline, "voice_source", None):
             _, as_proto, am_proto = protos["audio"]
             am = copy.deepcopy(am_proto)
@@ -536,7 +536,7 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
     if dangling:
         problems.append(f"끊긴 소재 참조 {dangling}개")
     if shared := sum(1 for n in seen.values() if n > 1):
-        problems.append(f"여러 세그먼트가 공유하는 extra 소재 {shared}개 — 미리보기 재생이 안 된다")
+        problems.append(f"여러 세그먼트가 공유하는 extra 소재 {shared}개 - 미리보기 재생이 안 된다")
 
     for track in raw["tracks"]:
         segs = sorted(track.get("segments") or [], key=lambda s: s["target_timerange"]["start"])
@@ -548,7 +548,7 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
                    - (a["target_timerange"]["start"] + a["target_timerange"]["duration"])) > 1000
         )
         if holes:
-            problems.append(f"영상 트랙에 틈 {holes}개 — 검은 프레임이 낀다")
+            problems.append(f"영상 트랙에 틈 {holes}개 - 검은 프레임이 낀다")
 
     for mat in raw["materials"].get("texts") or []:
         try:
@@ -561,7 +561,7 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
             if isinstance(rng, list) and len(rng) == 2 and rng[1] != want:
                 problems.append(
                     f"자막 스타일 범위가 글자 수와 안 맞는다 ({rng} vs {want}): "
-                    f"{content.get('text', '')[:16]!r} — 그 부분만 크기가 튄다")
+                    f"{content.get('text', '')[:16]!r} - 그 부분만 크기가 튄다")
 
     # 타임라인 id 고리: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
     project_path = root / "Timelines" / "project.json"
@@ -571,12 +571,12 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
         if main_id != raw.get("id"):
             problems.append(
                 f"타임라인 id 불일치 (draft_info.id={str(raw.get('id'))[:8]} vs "
-                f"main_timeline_id={str(main_id)[:8]}) — 재생이 안 된다")
+                f"main_timeline_id={str(main_id)[:8]}) - 재생이 안 된다")
         sub = root / "Timelines" / str(main_id) / "draft_info.json"
         if not sub.exists():
             problems.append(f"하위 타임라인 문서 없음: Timelines/{str(main_id)[:8]}…/draft_info.json")
         elif json.loads(sub.read_text(encoding="utf-8")).get("duration") != raw.get("duration"):
-            problems.append("루트와 하위 타임라인의 길이가 다르다 — 둘 다 써야 한다")
+            problems.append("루트와 하위 타임라인의 길이가 다르다 - 둘 다 써야 한다")
 
     for path_key in ("videos", "audios"):
         for mat in raw["materials"].get(path_key) or []:
