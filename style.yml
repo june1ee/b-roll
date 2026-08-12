@@ -5,7 +5,7 @@
 layers:
   main:                       # 메인 자막
     font: Pretendard
-    weight: medium            # Bold 아님 — Pretendard-Medium.otf
+    weight: medium            # Bold 아님 - Pretendard-Medium.otf
     color: "#FFFFFF"
     outline: 0.017            # 캡컷 stroke width. 아주 얇음
     shadow_alpha: 0.12        # 거의 안 보이는 그림자

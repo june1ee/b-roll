@@ -1,4 +1,4 @@
-"""sauger CLI."""
+"""broll CLI."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     else:
         print("오류: 릴스 yml 을 주거나 --from-capcut 을 써라", file=sys.stderr)
         return 1
-    work = reel.root / ".sauger" / reel.path.stem
+    work = reel.root / ".broll" / reel.path.stem
 
     def align_progress(i: int, n: int, text: str) -> None:
         print(f"  [{i}/{n}] 정렬  {text[:34]}", file=sys.stderr)
@@ -82,7 +82,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         weak = [c for c in tl.clips if c.rec and c.score < LOW_SCORE]
         if weak:
             print(f"⚠ 정렬 신뢰도 낮은 줄 {len(weak)}개: "
-                  f"{', '.join(str(c.index) for c in weak)} — 녹음/자막이 다를 수 있음", file=sys.stderr)
+                  f"{', '.join(str(c.index) for c in weak)} - 녹음/자막이 다를 수 있음", file=sys.stderr)
         loose = [c for c in tl.clips if c.rec and not c.tightened]
         if loose:
             print(f"· 자막이 대사와 달라 테이크를 통째로 쓴 줄: "
@@ -90,14 +90,14 @@ def cmd_build(args: argparse.Namespace) -> int:
     over = [c for c in tl.clips if len(re.findall(r"\*[^*]+\*", c.text)) > 1]
     if over:
         print(f"⚠ 강조가 한 프레임에 둘 이상인 줄: "
-              f"{', '.join(str(c.index) for c in over)} — 스타일 규칙상 하나만", file=sys.stderr)
+              f"{', '.join(str(c.index) for c in over)} - 스타일 규칙상 하나만", file=sys.stderr)
     notes = _collect_notes(tl, reverse)
     short = [c for c in tl.clips if c.src_short > 0.05]
     if short:
         print(f"⚠ 소스가 짧아 마지막 프레임으로 채운 줄: "
               f"{', '.join(f'{c.index}({c.src_short:.1f}s)' for c in short)}", file=sys.stderr)
 
-    out_name = args.capcut or (f"{args.from_capcut}-sauger" if args.from_capcut else None)
+    out_name = args.capcut or (f"{args.from_capcut}-broll" if args.from_capcut else None)
     if out_name:
         args.capcut = out_name
         if not reel.template:
@@ -148,7 +148,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"오류: {out} 가 이미 있다 (--overwrite 로 덮어쓰기)", file=sys.stderr)
         return 1
 
-    lines = [f"# {args.project} — 캡컷에서 녹음·속도까지 끝낸 프로젝트에서 뽑은 뼈대.",
+    lines = [f"# {args.project} - 캡컷에서 녹음·속도까지 끝낸 프로젝트에서 뽑은 뼈대.",
              f"# 줄 {len(voices)}개. t(자막)와 src(영상 소스)만 채우면 된다.",
              f"template: {args.project}",
              'ratio: "9:16"', "", "lines:"]
@@ -168,7 +168,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     if args.truth:
-        # 회귀 비교용 정답지. 개인 내용이라 저장소에 안 올린다 — 필요할 때 다시 뽑는다.
+        # 회귀 비교용 정답지. 개인 내용이라 저장소에 안 올린다 - 필요할 때 다시 뽑는다.
         truth = [
             {"i": i, "rec_in": round(v.src_in, 3), "rec_out": round(v.src_in + v.src_dur, 3),
              "speed": round(v.speed, 3), "tl": [round(v.start, 3), round(v.end, 3)]}
@@ -186,12 +186,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"만들었다 → {out}", file=sys.stderr)
     print(f"  줄 {len(voices)}개 · 총 {voices[-1].end:.2f}초 · 배속 "
           f"{min(v.speed for v in voices):.2f}~{max(v.speed for v in voices):.2f}x", file=sys.stderr)
-    print(f"  t 와 src 채운 뒤:  sauger build {out} --from-capcut {args.project}", file=sys.stderr)
+    print(f"  t 와 src 채운 뒤:  broll build {out} --from-capcut {args.project}", file=sys.stderr)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="sauger", description="릴스 조립기")
+    ap = argparse.ArgumentParser(prog="broll", description="릴스 조립기")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     b = sub.add_parser("build", help="릴스 yml → 타임라인 + 미리보기 mp4")

@@ -18,7 +18,7 @@ class ToolMissing(RuntimeError):
 # homebrew 의 기본 ffmpeg 8 병에는 libass 가 빠져 있어 자막을 못 굽는다.
 # ffmpeg-full 은 keg-only 라 PATH 에 안 잡히므로 여기서 직접 찾는다. (.zshrc 는 안 건드린다)
 _PREFERRED = (
-    Path(os.environ["SAUGER_FFMPEG_DIR"]) if os.environ.get("SAUGER_FFMPEG_DIR") else None,
+    Path(os.environ["BROLL_FFMPEG_DIR"]) if os.environ.get("BROLL_FFMPEG_DIR") else None,
     Path("/opt/homebrew/opt/ffmpeg-full/bin"),
     Path("/usr/local/opt/ffmpeg-full/bin"),
 )
@@ -100,7 +100,7 @@ def to_wav16k(src: Path, dst: Path) -> Path:
     return dst
 
 
-WAV_CACHE = Path(os.environ.get("SAUGER_WAV_DIR", Path.home() / ".cache/sauger/wav"))
+WAV_CACHE = Path(os.environ.get("BROLL_WAV_DIR", Path.home() / ".cache/broll/wav"))
 
 
 def cached_wav(src: Path, *, rate: int = 48000, channels: int = 2) -> Path:

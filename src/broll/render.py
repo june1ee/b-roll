@@ -1,4 +1,4 @@
-"""미리보기 렌더 — 트림된 녹음 + 영상 구간 + 번인 자막으로 mp4 한 개."""
+"""미리보기 렌더 - 트림된 녹음 + 영상 구간 + 번인 자막으로 mp4 한 개."""
 
 from __future__ import annotations
 
@@ -245,7 +245,7 @@ def _chunks(text: str) -> list[tuple[str, bool]]:
 
 
 def _dialogue_text(text: str, base_color: str, emphasis: str) -> str:
-    """강조 색만 입힌 ASS 텍스트. 자막은 한 줄로 간다 — 두 줄은 안 쓴다."""
+    """강조 색만 입힌 ASS 텍스트. 자막은 한 줄로 간다 - 두 줄은 안 쓴다."""
     base, pink = _ass_color(base_color), _ass_color(emphasis)
     return "".join(
         f"{{\\c{pink}}}{_escape_text(chunk)}{{\\c{base}}}" if emph else _escape_text(chunk)

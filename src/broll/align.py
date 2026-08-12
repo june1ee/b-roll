@@ -1,4 +1,4 @@
-"""강제 정렬 — 녹음 안에서 '그 줄에 쓸 구간'을 찾는다.
+"""강제 정렬 - 녹음 안에서 '그 줄에 쓸 구간'을 찾는다.
 
 역할 분담이 핵심이다:
   - **무엇을 말했나** → whisper (텍스트 매칭, 여러 테이크 중 마지막 고르기)
@@ -98,7 +98,7 @@ def _snap_end(t: float, spans: list[tuple[float, float]]) -> float:
     for i, (s, e) in enumerate(spans):
         if s <= t <= e:
             return e if e - t <= SNAP else t
-        if t < s:                       # 무음 갭 — 직전 발화 끝으로 (다음 구간으로 넘기면 안 된다)
+        if t < s:                       # 무음 갭 - 직전 발화 끝으로 (다음 구간으로 넘기면 안 된다)
             return spans[i - 1][1] if i else s
     return spans[-1][1]
 
@@ -146,7 +146,7 @@ def find_span(chars: list[Char], expected: str,
     first.coverage = coverage
     # 자막이 대사를 거의 그대로 옮긴 경우에만 텍스트로 구간을 좁힌다.
     # 자막이 요약이면(커버리지가 낮으면) 어느 부분을 말한 건지 텍스트로 못 정하므로
-    # 첫 테이크를 통째로 쓰는 쪽이 안전하다 — 실측상 뒤 테이크는 군더더기였다.
+    # 첫 테이크를 통째로 쓰는 쪽이 안전하다 - 실측상 뒤 테이크는 군더더기였다.
     if score < STRONG_MATCH or coverage < MIN_COVERAGE:
         return first
 
