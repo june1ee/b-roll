@@ -4,7 +4,7 @@ A reel assembler that fits between two CapCut sessions.
 
 You record the voice in CapCut and drop in rough clips. broll lines the video and
 captions up to the voice, then hands a real CapCut project back so you can add music
-and export. íêµ­ì´: [README.ko.md](README.ko.md).
+and export. 한국어: [README.ko.md](README.ko.md).
 
 ## Why it works this way
 
