@@ -10,6 +10,45 @@ If you landed here looking for how CapCut stores its projects rather than for th
 [**docs/capcut-draft-format.md**](docs/capcut-draft-format.md) is a standalone write-up of
 the format and the five things that break a writer.
 
+```mermaid
+flowchart TB
+    subgraph inputs [" "]
+        direction LR
+        CAP["CapCut project<br/>voice recorded here"]
+        YML["reels/&lt;name&gt;.yml<br/>captions + sources"]
+        REC["loose recordings<br/>one per line"]
+    end
+
+    CAP -->|"--from-capcut"| READ["read the timeline verbatim<br/>ranges · speed ratios · TTS metadata"]
+    YML --> READ
+    YML --> ALIGN
+    REC -->|"--capcut"| ALIGN
+
+    subgraph fallback ["fallback alignment — only when the voice was not recorded in CapCut"]
+        direction LR
+        ALIGN["align"] --> W["whisper.cpp<br/><i>what was said</i>"]
+        ALIGN --> S["silencedetect<br/><i>where it started / stopped</i>"]
+        W --> SPAN["voice span per line"]
+        S --> SPAN
+    end
+
+    READ --> ASM
+    SPAN --> ASM
+
+    ASM["assemble<br/>trim each rough clip to its voice length<br/>nth voice ↔ nth clip ↔ nth caption"]
+
+    ASM --> TPL["clone the template project,<br/>swap segments only"]
+    TPL --> OUT1["CapCut project ✅ source of truth"]
+    ASM --> OUT2["preview mp4 + storyboard PNG<br/>proxies, for checking timing"]
+    ASM --> OUT3["timeline.json"]
+
+    OUT1 --> CHECK{"invariant checks<br/>see the table below"}
+```
+
+> **Read the two entry paths, not the boxes.** `--from-capcut` *reads* timing that CapCut already
+> committed to, so alignment error is zero by construction — that is the default and the one you want.
+> `--capcut` *infers* timing, and only exists for voice recorded somewhere else.
+
 ## Why it works this way
 
 **It never recreates your styling.** Fonts, sizes, strokes, shadows, positions and speed
