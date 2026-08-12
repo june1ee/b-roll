@@ -6,6 +6,10 @@ You record the voice in CapCut and drop in rough clips. broll lines the video an
 captions up to the voice, then hands a real CapCut project back so you can add music
 and export. 한국어: [README.ko.md](README.ko.md).
 
+If you landed here looking for how CapCut stores its projects rather than for the tool,
+[**docs/capcut-draft-format.md**](docs/capcut-draft-format.md) is a standalone write-up of
+the format and the five things that break a writer.
+
 ## Why it works this way
 
 **It never recreates your styling.** Fonts, sizes, strokes, shadows, positions and speed
