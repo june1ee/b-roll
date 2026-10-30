@@ -145,7 +145,7 @@ def find_span(chars: list[Char], expected: str,
     first.score = score
     first.coverage = coverage
     # 자막이 대사를 거의 그대로 옮긴 경우에만 텍스트로 구간을 좁힌다.
-    # 자막이 요약이면(커버리지가 낮으면) 어느 부분을 말한 건지 텍스트로 못 정하므로
+    # 자막이 말과 많이 다르면(커버리지가 낮으면) 어느 부분을 말한 건지 텍스트로 못 정하므로
     # 첫 테이크를 통째로 쓰는 쪽이 안전하다 - 실측상 뒤 테이크는 군더더기였다.
     if score < STRONG_MATCH or coverage < MIN_COVERAGE:
         return first

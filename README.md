@@ -82,7 +82,7 @@ uv run broll caption 1030 --style 0814-cut
 ```
 
 When the reel is one sitting-down take cut up in CapCut and the captions are meant to be
-the spoken words in short phrases (not a paraphrase), there is nothing to pair 1:1. broll
+the spoken words in short phrases, there is no voice track to pair 1:1. broll
 rebuilds the audio exactly as the timeline plays it - kept cuts only, at their speed - and
 transcribes that once, so every word on screen is a word the viewer hears. Phrases break at
 sentence ends, pauses and cut boundaries first, then long runs are split at clause endings
@@ -104,9 +104,12 @@ whisper.cpp timestamps drift at the boundaries by 0.3-1.3s when measured, so *wh
 said* comes from whisper and *where it started and stopped* comes from `silencedetect`.
 Neither signal is trusted for the thing it is bad at.
 
-**Captions are usually a paraphrase, not a transcript.** In a real reel, half the lines
-did not match the spoken words closely. The span is only tightened from the text when the
-match is strong and covers most of what was heard; otherwise the whole take is used.
+**Captions are the spoken words, trimmed - not a verbatim transcript.** Checked against 16
+recordings from two real reels: the content is what was said, but endings are shortened
+("예쁘네요" → "예쁨"), filler words dropped, and one take is sometimes split over two lines.
+That is enough to throw off matching on the exact text, so the span is only tightened from
+the text when the match is strong and covers most of what was heard; otherwise the whole
+take is used.
 
 **The preview is a proxy.** Burned-in captions approximate CapCut's text engine through
 libass and will not match it exactly - colour emoji cannot be rendered at all and are
