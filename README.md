@@ -75,11 +75,19 @@ uv run broll build reels/0812.yml --capcut 0812-out
 The nth voice segment pairs with the nth rough clip and the nth caption. Mismatched counts
 fail immediately rather than silently misaligning.
 
-### Talking-head reels: captions are what you said
+### Captions from what you said
 
 ```bash
-uv run broll caption 1030 --style 0814-cut
+uv run broll caption 1030 --style 0814-cut            # one talking-head take, cut up in CapCut
+uv run broll caption 0806 --style 0806 --max-chars 22  # vlog with line-by-line recordings
+uv run broll caption 0806 --style 0806 --dry-run       # print the captions, write nothing
 ```
+
+The voice comes from the audio-track recordings when the project has any, otherwise from
+the first video track (`--source voice|video` to force one). With recordings, each one
+starts a new line; in a single take, cuts are often jump cuts mid-sentence, so lines do not
+break there. Vlog captions are the spoken words with endings shortened, so this lays down a
+first draft to trim rather than the finished text.
 
 When the reel is one sitting-down take cut up in CapCut and the captions are meant to be
 the spoken words in short phrases, there is no voice track to pair 1:1. broll

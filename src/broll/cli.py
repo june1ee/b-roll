@@ -191,10 +191,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_caption(args: argparse.Namespace) -> int:
-    print(f"받아쓰는 중: 캡컷 '{args.project}' 의 첫 영상 트랙", file=sys.stderr)
-    caps = caption.captions(args.project, args.max_chars)
+    source, caps = caption.captions(args.project, args.max_chars, args.source)
+    where = "오디오 트랙의 녹음" if source == "voice" else "첫 영상 트랙의 소리"
+    print(f"받아씀: 캡컷 '{args.project}' 의 {where}", file=sys.stderr)
     for start, end, text in caps:
         print(f"  {_fmt(start)}-{_fmt(end)}  {text}", file=sys.stderr)
+    if args.dry_run:
+        return 0
     name = args.name or f"{args.project}-caption"
     dst = capcut.write_captions(args.project, args.style, name, caps, overwrite=args.overwrite)
     print(f"캡컷 '{dst.name}' - 자막 {len(caps)}줄, 스타일은 '{args.style}'", file=sys.stderr)
@@ -225,11 +228,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="회귀 비교용 정답지(tests/truth-<프로젝트>.json)도 같이 뽑는다")
     i.set_defaults(func=cmd_init)
 
-    c = sub.add_parser("caption", help="말한 영상 → 말한 그대로 구절 자막 (썰 포맷)")
-    c.add_argument("project", help="캡컷 프로젝트 이름 (첫 영상 트랙이 말하는 영상)")
+    c = sub.add_parser("caption", help="들리는 목소리 → 말한 그대로 구절 자막")
+    c.add_argument("project", help="캡컷 프로젝트 이름")
     c.add_argument("--style", required=True, metavar="프로젝트", help="자막 생김새를 가져올 캡컷 프로젝트")
     c.add_argument("--name", help="출력 캡컷 프로젝트 이름 (기본 <프로젝트>-caption)")
     c.add_argument("--max-chars", type=int, default=caption.MAX_CHARS, help="한 줄 최대 글자 수")
+    c.add_argument("--source", choices=["auto", "voice", "video"], default="auto",
+                   help="voice: 오디오 트랙의 줄별 녹음 · video: 첫 영상 트랙 · auto: 녹음이 있으면 voice")
+    c.add_argument("--dry-run", action="store_true", help="자막만 출력하고 캡컷 프로젝트는 만들지 않는다")
     c.add_argument("--overwrite", action="store_true")
     c.set_defaults(func=cmd_caption)
 

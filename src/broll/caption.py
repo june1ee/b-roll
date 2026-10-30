@@ -1,7 +1,8 @@
 """말한 영상 → 구절 단위 자막.
 
 썰 포맷(0814)은 자막이 말한 구절 그대로이고 녹음 트랙도 없어서 1:1로 짝지을 게 없다.
-타임라인에서 들리는 소리를 받아쓰고 짧은 구절로 묶기만 하면 된다.
+브이로그(0806)도 자막은 말한 그대로를 어미만 줄인 것이라, 받아쓴 걸 깔고 손으로 다듬는 게 빠르다.
+타임라인에서 들리는 목소리를 받아쓰고 짧은 구절로 묶기만 하면 된다.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from . import asr
 from . import capcut as cc
 from . import ffmpeg as ff
 
+_AUDIO_REV = "2"  # timeline_audio 만드는 방식이 바뀌면 올린다 (캐시 무효화용)
 CLIP_CACHE = Path(os.environ.get("BROLL_CLIP_DIR", Path.home() / ".cache/broll/clips"))
 
 MAX_CHARS = 16         # 0814 의 가장 긴 줄이 공백 포함 19자. 한 줄로 안 접히는 선
@@ -48,6 +50,16 @@ class Spoken:
     cut: int
 
 
+def voice_cuts(project: str | Path) -> list[Cut]:
+    """오디오 트랙의 줄별 녹음·TTS. 브이로그 포맷은 목소리가 여기 있다."""
+    cuts = []
+    for v in cc.voice_segments(project):
+        if not v.src or not v.src.exists():
+            raise FileNotFoundError(f"녹음 파일을 못 찾음: {v.src}")
+        cuts.append(Cut(v.start, v.end, v.src, v.src_in, v.src_in + v.src_dur))
+    return cuts
+
+
 def main_cuts(project: str | Path) -> list[Cut]:
     """첫 영상 트랙이 말하는 영상이다. 위 트랙의 b-roll 은 소리를 안 쓴다고 본다."""
     root = cc.draft_dir(project)
@@ -71,41 +83,41 @@ def main_cuts(project: str | Path) -> list[Cut]:
 
 
 def timeline_audio(cuts: list[Cut]) -> Path:
-    """타임라인에서 실제로 들리는 소리를 그대로 이어 붙인 wav (배속·잘라낸 구간 반영).
+    """타임라인에서 실제로 들리는 목소리만 제자리에 놓은 wav (배속·잘라낸 구간 반영).
 
     원본을 받아쓰고 컷에 비춰 거르면 어절 시각이 최대 1초씩 밀려 경계의 말이 빠지고,
     컷만 따로 받아쓰면 1초짜리 컷에서 whisper 가 말을 지어낸다(둘 다 실측).
     들리는 그대로를 한 번에 받아쓰면 문맥도 살고 시각도 곧바로 타임라인 시각이다.
     """
-    key = "|".join(f"{c.src.resolve()}:{c.src.stat().st_mtime:.0f}:{c.src_in:.3f}:{c.src_out:.3f}:"
+    key = _AUDIO_REV + "|".join(f"{c.src.resolve()}:{c.src.stat().st_mtime:.0f}:{c.src_in:.3f}:{c.src_out:.3f}:"
                    f"{c.tl_start:.3f}:{c.tl_end:.3f}" for c in cuts)
     dst = CLIP_CACHE / f"{hashlib.sha1(key.encode()).hexdigest()[:16]}.wav"
     if dst.exists():
         return dst
     CLIP_CACHE.mkdir(parents=True, exist_ok=True)
+    # 캡컷 녹음(raw AAC)은 그대로 자르면 구간이 짧아지므로 wav 로 풀어서 쓴다
     srcs = list(dict.fromkeys(c.src for c in cuts))
-    inputs = [arg for src in srcs for arg in ("-i", str(src))]
-    parts, labels, t = [], [], 0.0
+    inputs = [arg for src in srcs for arg in ("-i", str(ff.cached_wav(src, rate=16000, channels=1)))]
+    parts = []
     for i, c in enumerate(cuts):
-        if c.tl_start - t > 0.01:
-            parts.append(f"aevalsrc=0:d={c.tl_start - t:.3f}:s=16000[g{i}]")
-            labels.append(f"[g{i}]")
         speed = (c.src_out - c.src_in) / (c.tl_end - c.tl_start)
+        delay = round(c.tl_start * 1000)
         parts.append(f"[{srcs.index(c.src)}:a]atrim={c.src_in:.3f}:{c.src_out:.3f},"
-                     f"asetpts=PTS-STARTPTS,atempo={speed:.4f},aresample=16000,"
-                     f"aformat=channel_layouts=mono[a{i}]")
-        labels.append(f"[a{i}]")
-        t = c.tl_end
-    parts.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[out]")
+                     f"asetpts=PTS-STARTPTS,atempo={speed:.4f},adelay={delay}:all=1[a{i}]")
+    # 겹치는 녹음이 있어도 제자리에 놓이도록 이어 붙이지 않고 섞는다
+    parts.append("".join(f"[a{i}]" for i in range(len(cuts)))
+                 + f"amix=inputs={len(cuts)}:normalize=0:duration=longest[out]")
     ff.ffmpeg(*inputs, "-filter_complex", ";".join(parts), "-map", "[out]",
-              "-c:a", "pcm_s16le", str(dst))
+              "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(dst))
     return dst
 
 
 def spoken_words(cuts: list[Cut]) -> list[Spoken]:
     out = []
     for w in asr.words(timeline_audio(cuts)):
-        i = next((k for k, c in enumerate(cuts) if w.start < c.tl_end), len(cuts) - 1)
+        # 어느 컷에서 나온 말인지 - 컷이 바뀌면 줄도 바꾼다
+        i = next((k for k, c in enumerate(cuts) if c.tl_start <= (w.start + w.end) / 2 < c.tl_end),
+                 min(range(len(cuts)), key=lambda k: abs(cuts[k].tl_start - w.start)))
         out.append(Spoken(w.text, w.start, w.end, w.start, w.end, i))
     return out
 
@@ -135,15 +147,20 @@ def _split(run: list[Spoken], max_chars: int) -> list[list[Spoken]]:
     return cuts[::-1]
 
 
-def phrases(words: list[Spoken], max_chars: int = MAX_CHARS) -> list[list[Spoken]]:
-    """문장 끝·쉼·컷 경계에서 먼저 끊고, 긴 덩어리만 다시 나눈다."""
+def phrases(words: list[Spoken], max_chars: int = MAX_CHARS,
+            break_on_cut: bool = True) -> list[list[Spoken]]:
+    """문장 끝·쉼·컷 경계에서 먼저 끊고, 긴 덩어리만 다시 나눈다.
+
+    통짜 테이크의 컷 경계는 말 중간을 자른 점프컷이 많아서(실측: "두 / 건이었는데요")
+    거기서 끊으면 0.1초짜리 자막이 생긴다. 줄별 녹음일 때만 컷 경계에서 끊는다.
+    """
     out: list[list[Spoken]] = []
     run: list[Spoken] = []
     for w in words:
         if run:
             prev = run[-1]
             if (prev.text[-1] in ".?!,"
-                    or w.cut != prev.cut
+                    or (break_on_cut and w.cut != prev.cut)
                     or w.src_start - prev.src_end > PAUSE):
                 out.extend(_split(run, max_chars))
                 run = []
@@ -153,10 +170,17 @@ def phrases(words: list[Spoken], max_chars: int = MAX_CHARS) -> list[list[Spoken
     return out
 
 
-def captions(project: str | Path, max_chars: int = MAX_CHARS) -> list[tuple[float, float, str]]:
-    cuts = main_cuts(project)
-    groups = phrases(spoken_words(cuts), max_chars)
-    end_of_video = cuts[-1].tl_end if cuts else 0.0
+def captions(project: str | Path, max_chars: int = MAX_CHARS,
+             source: str = "auto") -> tuple[str, list[tuple[float, float, str]]]:
+    """source: voice(오디오 트랙 녹음) | video(첫 영상 트랙) | auto(녹음이 있으면 voice)."""
+    if source == "auto":
+        source = "voice" if cc.voice_segments(project) else "video"
+    cuts = voice_cuts(project) if source == "voice" else main_cuts(project)
+    if not cuts:
+        raise RuntimeError(f"{project}: 받아쓸 {source} 구간이 없다")
+    cuts.sort(key=lambda c: c.tl_start)
+    groups = phrases(spoken_words(cuts), max_chars, break_on_cut=source == "voice")
+    end_of_video = max(cc.read(project).duration, cuts[-1].tl_end)
     out = []
     for i, g in enumerate(groups):
         # 0814 에는 마침표가 없다. 물음표·느낌표는 말투라 남긴다
@@ -164,4 +188,4 @@ def captions(project: str | Path, max_chars: int = MAX_CHARS) -> list[tuple[floa
         start = 0.0 if i == 0 and g[0].start < 0.5 else g[0].start
         nxt = groups[i + 1][0].start if i + 1 < len(groups) else end_of_video
         out.append((start, min(nxt, g[-1].end + HOLD), text))
-    return out
+    return source, out
