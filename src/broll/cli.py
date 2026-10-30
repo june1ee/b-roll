@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import assemble, capcut, project, render
+from . import assemble, caption, capcut, project, render
 from . import ffmpeg as ff
 
 LOW_SCORE = 0.75
@@ -190,6 +190,19 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_caption(args: argparse.Namespace) -> int:
+    print(f"받아쓰는 중: 캡컷 '{args.project}' 의 첫 영상 트랙", file=sys.stderr)
+    caps = caption.captions(args.project, args.max_chars)
+    for start, end, text in caps:
+        print(f"  {_fmt(start)}-{_fmt(end)}  {text}", file=sys.stderr)
+    name = args.name or f"{args.project}-caption"
+    dst = capcut.write_captions(args.project, args.style, name, caps, overwrite=args.overwrite)
+    print(f"캡컷 '{dst.name}' - 자막 {len(caps)}줄, 스타일은 '{args.style}'", file=sys.stderr)
+    for p in capcut.validate_draft(dst):
+        print(f"  경고: {p}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="broll", description="릴스 조립기")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -211,6 +224,14 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--truth", action="store_true",
                    help="회귀 비교용 정답지(tests/truth-<프로젝트>.json)도 같이 뽑는다")
     i.set_defaults(func=cmd_init)
+
+    c = sub.add_parser("caption", help="말한 영상 → 말한 그대로 구절 자막 (썰 포맷)")
+    c.add_argument("project", help="캡컷 프로젝트 이름 (첫 영상 트랙이 말하는 영상)")
+    c.add_argument("--style", required=True, metavar="프로젝트", help="자막 생김새를 가져올 캡컷 프로젝트")
+    c.add_argument("--name", help="출력 캡컷 프로젝트 이름 (기본 <프로젝트>-caption)")
+    c.add_argument("--max-chars", type=int, default=caption.MAX_CHARS, help="한 줄 최대 글자 수")
+    c.add_argument("--overwrite", action="store_true")
+    c.set_defaults(func=cmd_caption)
 
     args = ap.parse_args(argv)
     try:

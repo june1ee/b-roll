@@ -381,15 +381,7 @@ def _seg_from(proto: dict, material_id: str, start: float, dur: float,
 def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = False) -> Path:
     """타임라인을 캡컷 드래프트로 쓴다. 템플릿 프로젝트를 복제한 뒤 세그먼트만 교체한다."""
     src_dir = draft_dir(template)
-    dst_dir = DRAFT_ROOT / name
-    if dst_dir.exists():
-        if not overwrite:
-            raise FileExistsError(f"이미 있는 캡컷 프로젝트다: {name} (덮어쓰려면 --overwrite)")
-        shutil.rmtree(dst_dir)
-    # 백업·임시 파일만 뺀다. 나머지는 뭐가 필요한지 확실치 않으니 통째로 가져간다.
-    # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 - 실측)
-    shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(
-        "draft_info.json.bak", "template-*.tmp"))
+    dst_dir = _copy_project(src_dir, name, overwrite)
 
     raw = json.loads((src_dir / "draft_info.json").read_text(encoding="utf-8"))
     protos = _prototypes(raw)
@@ -475,12 +467,61 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             tracks.append(track)
     raw["tracks"] = tracks
 
-    now = int(_mtime(src_dir) * 1_000_000)
+    raw["duration"] = round(timeline.duration * US)
+    _save(raw, dst_dir, name, int(_mtime(src_dir) * 1_000_000))
+    return dst_dir
+
+
+def write_captions(project: str | Path, style: str | Path, name: str,
+                   captions: list[tuple[float, float, str]], *, overwrite: bool = False) -> Path:
+    """프로젝트를 복제하고 자막 트랙 하나만 얹는다. 영상·오디오는 손대지 않는다."""
+    src_dir = draft_dir(project)
+    style_raw = json.loads((draft_dir(style) / "draft_info.json").read_text(encoding="utf-8"))
+    proto = _prototypes(style_raw)["text"].get("main")
+    if not proto:
+        raise RuntimeError(f"스타일 프로젝트 {style} 에 자막 견본이 없다")
+    track_proto, seg_proto, mat_proto = proto
+
+    raw = json.loads((src_dir / "draft_info.json").read_text(encoding="utf-8"))
+    mats = raw["materials"]
+    # extra 소재는 스타일 프로젝트에서 찾아 이 프로젝트로 복제해 온다
+    style_index = _index_materials(style_raw["materials"])
+    segs = []
+    for start, end, text in captions:
+        tm = copy.deepcopy(mat_proto)
+        tm["id"] = _uid()
+        content = json.loads(tm.get("content") or "{}")
+        content["text"] = text
+        content["styles"] = [dict((content.get("styles") or [{}])[0], range=[0, _u16len(text)])]
+        tm["content"] = json.dumps(content, ensure_ascii=False)
+        mats.setdefault("texts", []).append(tm)
+        segs.append(_seg_from(seg_proto, tm["id"], start, end - start,
+                              index=style_index, mats=mats))
+    raw["tracks"].append(dict(copy.deepcopy(track_proto), segments=segs, id=_uid()))
+
+    dst_dir = _copy_project(src_dir, name, overwrite)
+    _save(raw, dst_dir, name, int(_mtime(src_dir) * 1_000_000))
+    return dst_dir
+
+
+def _copy_project(src_dir: Path, name: str, overwrite: bool) -> Path:
+    dst_dir = DRAFT_ROOT / name
+    if dst_dir.exists():
+        if not overwrite:
+            raise FileExistsError(f"이미 있는 캡컷 프로젝트다: {name} (덮어쓰려면 --overwrite)")
+        shutil.rmtree(dst_dir)
+    # 백업·임시·잠금 파일만 뺀다. 나머지는 뭐가 필요한지 확실치 않으니 통째로 가져간다.
+    # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 - 실측)
+    shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(
+        "draft_info.json.bak", "template-*.tmp", ".locked"))
+    return dst_dir
+
+
+def _save(raw: dict, dst_dir: Path, name: str, now: int) -> None:
     # draft_info.id 는 '타임라인 id' 다. Timelines/project.json 의 main_timeline_id 및
     # Timelines/<id>/ 폴더명과 반드시 같아야 한다. 새로 만들면 캡컷이 메인 타임라인을
     # 못 찾아 빈 탭을 띄우고 재생 길이가 0 이 된다(실측).
     raw["path"] = str(dst_dir / "draft_info.json")
-    raw["duration"] = round(timeline.duration * US)
     raw["update_time"] = now
     body = json.dumps(raw, ensure_ascii=False)
     (dst_dir / "draft_info.json").write_text(body, encoding="utf-8")
@@ -510,7 +551,6 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         meta["tm_duration"] = raw["duration"]
         meta["tm_draft_modified"] = now
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-    return dst_dir
 
 
 def validate_draft(name_or_path: str | Path) -> list[str]:

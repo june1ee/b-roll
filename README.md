@@ -75,6 +75,21 @@ uv run broll build reels/0812.yml --capcut 0812-out
 The nth voice segment pairs with the nth rough clip and the nth caption. Mismatched counts
 fail immediately rather than silently misaligning.
 
+### Talking-head reels: captions are what you said
+
+```bash
+uv run broll caption 1030 --style 0814-cut
+```
+
+When the reel is one sitting-down take cut up in CapCut and the captions are meant to be
+the spoken words in short phrases (not a paraphrase), there is nothing to pair 1:1. broll
+rebuilds the audio exactly as the timeline plays it - kept cuts only, at their speed - and
+transcribes that once, so every word on screen is a word the viewer hears. Phrases break at
+sentence ends, pauses and cut boundaries first, then long runs are split at clause endings
+and kept under `--max-chars` (16). The result is a copy, `<project>-caption`, with one
+caption track styled from `--style`; video and audio are untouched. Expect to fix the odd
+misheard word in CapCut.
+
 Outputs land in `reels/.broll/<name>/`: a CapCut project, a preview mp4, a storyboard PNG
 with per-cut warnings drawn on it, and `timeline.json`.
 

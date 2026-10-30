@@ -30,6 +30,13 @@ class Char:
     end: float
 
 
+@dataclass(frozen=True)
+class Word:
+    text: str
+    start: float
+    end: float
+
+
 def model_path() -> Path:
     p = MODEL_DIR / MODEL_NAME
     if not p.exists():
@@ -49,16 +56,26 @@ def _fingerprint(audio: Path, lang: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:16]
 
 
-def transcribe(audio: Path, lang: str = "ko") -> list[Char]:
-    """녹음 → 문자별 타임스탬프. 내용 해시로 캐시하므로 재실행은 공짜다."""
+def _segments(audio: Path, lang: str) -> list[dict]:
+    """내용 해시로 캐시하므로 재실행은 공짜다."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache = CACHE_DIR / f"{_fingerprint(audio, lang)}.json"
     if cache.exists():
-        raw = json.loads(cache.read_text())
-    else:
-        raw = _run_whisper(audio, lang)
-        cache.write_text(json.dumps(raw, ensure_ascii=False))
-    return _to_chars(raw)
+        return json.loads(cache.read_text())
+    raw = _run_whisper(audio, lang)
+    cache.write_text(json.dumps(raw, ensure_ascii=False))
+    return raw
+
+
+def transcribe(audio: Path, lang: str = "ko") -> list[Char]:
+    """녹음 → 문자별 타임스탬프."""
+    return _to_chars(_segments(audio, lang))
+
+
+def words(audio: Path, lang: str = "ko") -> list[Word]:
+    """녹음 → 어절별 타임스탬프. -ml 1 -sow 출력이라 whisper 세그먼트 하나가 어절 하나다."""
+    return [Word(seg["text"].strip(), seg["t0"], seg["t1"])
+            for seg in _segments(audio, lang) if (seg["text"] or "").strip()]
 
 
 def _run_whisper(audio: Path, lang: str) -> list[dict]:
