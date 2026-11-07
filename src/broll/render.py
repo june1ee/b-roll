@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -18,36 +17,19 @@ from .assemble import Timeline
 FADE_IN = 0.09
 FADE_OUT = 0.04
 SAMPLE_RATE = 48000
-MAX_CHARS_PER_ROW = 16
 _EMPH = re.compile(r"\*([^*]+)\*")
 
 
-@dataclass
-class Style:
-    font: str = "Pretendard"
-    color: str = "#FFFFFF"
-    outline: str = "thin"
-    shadow: str = "soft"
-    margin_v: int = 320
-    emphasis: str = "#FFD3F2"
-    max_emphasis: int = 1
+DEFAULT_EMPHASIS = "#FFD3F2"
 
-    @classmethod
-    def load(cls, root: Path) -> "Style":
-        for path in (root / "style.yml", root.parent / "style.yml", Path.cwd() / "style.yml"):
-            if path.exists():
-                d = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-                cap, emp = d.get("caption") or {}, d.get("emphasis") or {}
-                return cls(
-                    font=cap.get("font", cls.font),
-                    color=cap.get("color", cls.color),
-                    outline=cap.get("outline", cls.outline),
-                    shadow=cap.get("shadow", cls.shadow),
-                    margin_v=int(cap.get("margin_v", cls.margin_v)),
-                    emphasis=emp.get("color", cls.emphasis),
-                    max_emphasis=int(emp.get("max_per_frame", cls.max_emphasis)),
-                )
-        return cls()
+
+def emphasis_color(root: Path) -> str:
+    """*강조* 를 칠할 색. 릴스 yml 옆이나 그 위 폴더, 현재 폴더의 style.yml 에서 읽는다."""
+    for path in (root / "style.yml", root.parent / "style.yml", Path.cwd() / "style.yml"):
+        if path.exists():
+            d = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            return (d.get("emphasis") or {}).get("color", DEFAULT_EMPHASIS)
+    return DEFAULT_EMPHASIS
 
 
 def _ass_color(hex_rgb: str) -> str:
@@ -61,14 +43,14 @@ def render(tl: Timeline, out: Path, *, work: Path, on_progress=None) -> Path:
 
     if not ff.has_filter("ass"):
         raise RuntimeError(
-            "이 ffmpeg 빌드에 자막(ass) 필터가 없다. `brew install ffmpeg-full` 로 libass 포함 빌드를 깔아라."
+            "this ffmpeg build has no ass filter for burning in captions. Install `brew install ffmpeg-full`, which includes libass."
         )
     styles = capcut.caption_styles(reel.template) if reel.template else {}
     if not styles:
-        raise RuntimeError("자막 스타일을 읽을 템플릿이 없다. yml 에 template: 을 넣어라.")
+        raise RuntimeError("no template to read the caption style from - add template: to the yml")
     audio = _audio_track(tl, work, on_progress)
     video = _video_track(tl, work, on_progress)
-    subs = _write_ass(tl, work / "subs.ass", styles, Style.load(reel.root).emphasis)
+    subs = _write_ass(tl, work / "subs.ass", styles, emphasis_color(reel.root))
 
     out.parent.mkdir(parents=True, exist_ok=True)
     if on_progress:

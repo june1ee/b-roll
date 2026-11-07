@@ -102,25 +102,25 @@ def _fit_pool(pool_start: float, pool_len: float, want: float, line) -> tuple[fl
 def from_capcut(reel: Reel, source: str) -> Timeline:
     """캡컷에서 이미 녹음·속도 조절까지 끝낸 프로젝트를 받아 타임라인을 만든다.
 
-    타이밍은 추정하지 않는다 - June 이 캡컷에서 확정한 값을 그대로 쓴다.
+    타이밍은 추정하지 않는다 - 캡컷에서 확정한 값을 그대로 쓴다.
     정렬(whisper)도 배속 추론도 필요 없고, TTS 로 만든 경우에도 똑같이 동작한다.
     n번째 목소리 세그먼트 ↔ n번째 줄로 짝짓는다.
     """
     voices = capcut.voice_segments(source)
     if not voices:
-        raise ValueError(f"'{source}' 에 녹음/TTS 세그먼트가 없다")
+        raise ValueError(f"'{source}' has no voice recordings or TTS on its audio tracks")
     if len(voices) != len(reel.lines):
         raise ValueError(
-            f"줄 수가 안 맞는다 - yml {len(reel.lines)}줄 vs '{source}' 목소리 {len(voices)}개.\n"
-            f"  한 줄에 목소리 하나씩 1:1 이어야 한다."
+            f"line count mismatch - the yml has {len(reel.lines)} lines but '{source}' has "
+            f"{len(voices)} voice segments.\n  Each line needs exactly one voice segment."
         )
 
     # 러프컷을 캡컷 영상 트랙에 올려뒀으면 그걸 소스 풀로 쓴다 (파일 경로를 yml 에 안 적어도 된다)
     rough = capcut.read(source).video
     if rough and not any(l.src for l in reel.lines) and len(rough) != len(voices):
         raise ValueError(
-            f"'{source}' 의 영상 {len(rough)}개와 목소리 {len(voices)}개가 안 맞는다.\n"
-            f"  한 줄에 러프컷 하나씩 1:1 로 올려두거나, yml 에 src 를 적어라."
+            f"'{source}' has {len(rough)} video clips but {len(voices)} voice segments.\n"
+            f"  Put one rough clip per line on the video track, or give each line a src: in the yml."
         )
 
     tl = Timeline(reel=reel, voice_source=source)
@@ -151,11 +151,11 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
     # 목소리 배속은 포맷마다 다르다. yml 에 없으면 템플릿이 쓰던 값을 그대로 쓴다.
     # (역방향 모드에서는 아예 추론하지 않고 캡컷에서 건 값을 읽는다)
     if reel.speed:
-        default_speed, origin = reel.speed, "yml 지정"
+        default_speed, origin = reel.speed, "set in the yml"
     elif reel.template:
-        default_speed, origin = capcut.voice_speed(reel.template), f"템플릿 {reel.template}"
+        default_speed, origin = capcut.voice_speed(reel.template), f"from template {reel.template}"
     else:
-        default_speed, origin = 1.0, "기본값"
+        default_speed, origin = 1.0, "default"
     tl.speed = default_speed
     tl.speed_origin = origin
 
@@ -192,21 +192,9 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
         )
 
         if line.src:
-            # 러프컷 다듬기: June 이 넉넉하게 잘라 준 클립에서 필요한 길이만큼만 남긴다.
-            # 러프컷은 보통 앞뒤에 여유를 두므로 기본은 가운데 정렬.
-            src_len = ff.duration(line.src)
-            slack = max(src_len - dur, 0.0)
-            if line.frm is not None:
-                start = line.frm
-            elif line.fit == "start":
-                start = 0.0
-            elif line.fit == "end":
-                start = slack
-            else:
-                start = slack / 2
-            clip.src_in = max(0.0, min(start, slack))
-            clip.src_len = src_len
-            clip.src_short = max(0.0, dur - (src_len - clip.src_in))
+            # 러프컷은 보통 앞뒤에 여유를 두므로 기본은 가운데 정렬
+            clip.src_len = ff.duration(line.src)
+            clip.src_in, clip.src_short = _fit_pool(0.0, clip.src_len, dur, line)
 
         tl.clips.append(clip)
         cursor = clip.tl_end + (reel.gap if i < len(reel.lines) else 0.0)

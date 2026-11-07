@@ -130,7 +130,7 @@ def find_span(chars: list[Char], expected: str,
     groups = take_groups(spans)
     v0, v1 = spans[0][0], spans[-1][1]
     # 첫 테이크를 쓰되, 끝은 '다음 테이크가 시작하기 직전'까지 늘린다.
-    # 실측(0806): June 은 뒤 군더더기 테이크만 버리고 그 앞 침묵은 남긴다.
+    # 실측(0806): 손편집에서는 뒤 군더더기 테이크만 버리고 그 앞 침묵은 남겼다.
     # 어차피 배속을 걸면 그 침묵도 같이 줄어든다.
     first_end = groups[1][0][0] if len(groups) > 1 else groups[0][-1][1]
     first = Span(groups[0][0][0], first_end, 0.0, takes=len(groups))

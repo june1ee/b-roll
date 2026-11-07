@@ -28,7 +28,7 @@ class Reel:
     height: int = 1920
     fps: int = 30
     template: str | None = None   # 캡컷 템플릿 프로젝트 이름
-    # 줄 사이 간격. 기본 0 - June 의 타임라인은 컷과 음성이 1:1 로 딱 붙어 있다(실측 틈 0개).
+    # 줄 사이 간격. 기본 0 - 실측한 릴스들은 컷과 음성이 1:1 로 딱 붙어 있었다(틈 0개).
     gap: float = 0.0
     speed: float | None = None    # 목소리 배속. None 이면 템플릿에서 읽는다
     lang: str = "ko"
@@ -49,7 +49,7 @@ def _ratio(value: str | None) -> tuple[int, int]:
         return table["9:16"]
     if value in table:
         return table[value]
-    raise ValueError(f"모르는 ratio: {value} (지원: {', '.join(table)})")
+    raise ValueError(f"unknown ratio: {value} (supported: {', '.join(table)})")
 
 
 def from_draft(name: str, *, root: Path | None = None) -> Reel:
@@ -63,7 +63,7 @@ def from_draft(name: str, *, root: Path | None = None) -> Reel:
     draft = capcut.read(name)
     voices = capcut.voice_segments(name)
     if not voices:
-        raise ValueError(f"'{name}' 에 녹음/TTS 가 없다")
+        raise ValueError(f"'{name}' has no voice recordings or TTS on its audio tracks")
     layers = capcut.caption_layers(draft)
 
     reel = Reel(
@@ -91,11 +91,11 @@ def load(path: Path) -> Reel:
     )
     raw_lines = data.get("lines") or []
     if not raw_lines:
-        raise ValueError(f"{path.name}: lines 가 비었다")
+        raise ValueError(f"{path.name}: lines is empty")
 
     for i, item in enumerate(raw_lines, 1):
         if not isinstance(item, dict) or not item.get("t"):
-            raise ValueError(f"{path.name}: {i}번째 줄에 t(자막)가 없다")
+            raise ValueError(f"{path.name}: line {i} has no t (caption)")
         line = Line(
             t=str(item["t"]).strip(),
             rec=reel.resolve(item["rec"]) if item.get("rec") else None,
@@ -108,9 +108,9 @@ def load(path: Path) -> Reel:
             aside=item.get("aside"),
         )
         if line.fit not in ("center", "start", "end"):
-            raise ValueError(f"{path.name}: {i}번째 줄 fit 값이 이상하다 → {line.fit}")
+            raise ValueError(f"{path.name}: line {i} has fit: {line.fit} (use center, start or end)")
         for label, p in (("rec", line.rec), ("src", line.src)):
             if p is not None and not p.exists():
-                raise FileNotFoundError(f"{path.name}: {i}번째 줄 {label} 파일 없음 → {p}")
+                raise FileNotFoundError(f"{path.name}: line {i} {label} not found: {p}")
         reel.lines.append(line)
     return reel

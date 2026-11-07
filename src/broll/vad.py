@@ -7,7 +7,6 @@ whisper.cpp 의 세그먼트 타임스탬프는 경계가 0.5~1초씩 밀린다(
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -26,11 +25,9 @@ DEFAULT_NOISE_DB = -42
 def speech_spans(audio: Path, *, noise_db: int = DEFAULT_NOISE_DB, min_silence: float = 0.15,
                  min_speech: float = 0.15) -> list[tuple[float, float]]:
     """[(start, end), ...] 발화 구간. 아무것도 못 찾으면 파일 전체 한 덩어리."""
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg 없음")
     total = ff.duration(audio)
     cp = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(audio),
+        [ff.binary("ffmpeg"), "-hide_banner", "-nostats", "-i", str(audio),
          "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"],
         capture_output=True, text=True, errors="replace",
     )

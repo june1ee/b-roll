@@ -41,7 +41,7 @@ def model_path() -> Path:
     p = MODEL_DIR / MODEL_NAME
     if not p.exists():
         raise RuntimeError(
-            f"whisper 모델 없음: {p}\n"
+            f"whisper model not found: {p}\n"
             f"  curl -L --fail -o {p} {MODEL_URL}"
         )
     return p
@@ -80,7 +80,7 @@ def words(audio: Path, lang: str = "ko") -> list[Word]:
 
 def _run_whisper(audio: Path, lang: str) -> list[dict]:
     if not shutil.which("whisper-cli"):
-        raise RuntimeError("whisper-cli 없음. `brew install whisper-cpp` 후 다시 시도.")
+        raise RuntimeError("whisper-cli not found. Install it with `brew install whisper-cpp`.")
     with tempfile.TemporaryDirectory() as td:
         wav = ff.to_wav16k(audio, Path(td) / "in.wav")
         prefix = Path(td) / "out"
@@ -93,7 +93,7 @@ def _run_whisper(audio: Path, lang: str) -> list[dict]:
         )
         js = prefix.with_suffix(".json")
         if not js.exists():
-            raise RuntimeError(f"whisper 출력 없음: {audio.name}")
+            raise RuntimeError(f"whisper produced no output for {audio.name}")
         data = json.loads(js.read_bytes().decode("utf-8", errors="replace"))
     return [
         {"t0": seg["offsets"]["from"] / 1000.0,

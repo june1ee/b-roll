@@ -1,8 +1,7 @@
-"""캡컷 드래프트(draft_info.json) 읽기.
+"""캡컷 드래프트(draft_info.json) 읽기·쓰기.
 
 CapCut 9.x 는 draft_content.json 이 아니라 draft_info.json 을 쓰고, 평문 JSON이다.
-지금은 읽기 전용 - 기존 프로젝트에서 '정답 편집'을 뽑아 비교/템플릿 용도로 쓴다.
-쓰기(M2)는 이 파일을 복제해 세그먼트만 교체하는 방식으로 붙인다.
+쓰기는 기존 프로젝트를 복제해 세그먼트만 교체한다. 포맷 정리는 docs/capcut-draft-format.md.
 """
 
 from __future__ import annotations
@@ -12,12 +11,14 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 US = 1_000_000  # 캡컷 시간 단위는 마이크로초
-DRAFT_ROOT = Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"
+DRAFT_ROOT = Path(os.environ.get(
+    "BROLL_CAPCUT_DRAFTS", Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"))
 _PLACEHOLDER = "##_draftpath_placeholder"
 
 
@@ -52,7 +53,14 @@ def draft_dir(name_or_path: str | Path) -> Path:
     cand = DRAFT_ROOT / str(name_or_path)
     if cand.is_dir():
         return cand
-    raise FileNotFoundError(f"캡컷 프로젝트를 못 찾음: {name_or_path} (찾은 곳: {DRAFT_ROOT})")
+    raise FileNotFoundError(
+        f"CapCut project not found: {name_or_path} (looked in {DRAFT_ROOT}; "
+        f"set BROLL_CAPCUT_DRAFTS or pass the project folder path)")
+
+
+def is_open(name_or_path: str | Path) -> bool:
+    """캡컷이 이 프로젝트를 열고 있으면 .locked 가 생긴다. 열린 채로 쓰면 캡컷이 닫으면서 덮어쓴다(실측)."""
+    return (draft_dir(name_or_path) / ".locked").exists()
 
 
 def _resolve(raw: str, root: Path) -> Path | None:
@@ -124,6 +132,12 @@ def read(name_or_path: str | Path) -> Draft:
 
 
 CLOCK_RE = re.compile(r"^\s*\d{1,2}\s*:\s*\d{2}\s*$")
+_EMPHASIS = re.compile(r"\*([^*]+)\*")
+
+
+def plain_caption(text: str) -> str:
+    """*강조* 는 미리보기에서만 색을 입힌다. 한 자막 안에서 범위별로 색을 나눈 캡컷 실물을 아직 못 봐서 별표만 뗀다."""
+    return _EMPHASIS.sub(r"\1", text)
 
 
 def classify_caption(text: str) -> str:
@@ -233,7 +247,7 @@ VOICE_KINDS = ("record", "text_to_audio")
 def voice_segments(name_or_path: str | Path) -> list[Seg]:
     """드래프트에서 목소리(녹음 또는 TTS) 세그먼트만 시간순으로.
 
-    June 이 캡컷에서 직접 녹음하고 속도까지 맞춰두면, 타이밍은 이미 확정된 것이다.
+    캡컷에서 직접 녹음하고 속도까지 맞춰뒀다면, 타이밍은 이미 확정된 것이다.
     그걸 읽어 쓰는 쪽이 whisper 정렬로 추정하는 것보다 정확하다.
     """
     draft = read(name_or_path)
@@ -252,7 +266,7 @@ def voice_passthrough(name_or_path: str | Path) -> tuple[list[dict], dict] | Non
     for track in raw["tracks"]:
         if track["type"] != "audio":
             continue
-        ids = {s.get("material_id") for s in track.get("segments") or []}
+        ids = list(dict.fromkeys(s.get("material_id") for s in track.get("segments") or []))
         mats = [auds[i] for i in ids if i in auds and auds[i].get("type") in VOICE_KINDS]
         if mats and len(mats) == len(ids):
             return mats, track
@@ -280,11 +294,11 @@ def voice_speed(template: str | Path) -> float:
     return round(speeds[len(speeds) // 2], 3)
 
 
-def _uid() -> str:
+def new_id() -> str:
     return str(uuid.uuid4()).upper()
 
 
-def _u16len(text: str) -> int:
+def u16len(text: str) -> int:
     """캡컷의 텍스트 스타일 range 는 UTF-16 코드 단위로 센다.
 
     이모지(😡 등)는 UTF-16 에서 2단위라 파이썬 len() 으로 세면 범위가 모자라고,
@@ -293,11 +307,11 @@ def _u16len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def _prototypes(raw: dict) -> dict:
+def prototypes(raw: dict) -> dict:
     """템플릿에서 종류별 '견본' 세그먼트+소재를 뽑는다.
 
     스타일·효과·위치가 전부 이 견본에 들어있으므로, 복제해서 텍스트와 시간만 갈아끼우면
-    June 이 캡컷에서 잡아둔 모양이 그대로 나온다. 직접 재현하려 들면 절대 못 맞춘다.
+    캡컷에서 잡아둔 모양이 그대로 나온다. 직접 재현하려 들면 절대 못 맞춘다.
     """
     mats = raw["materials"]
     texts = {t["id"]: t for t in mats.get("texts") or []}
@@ -320,7 +334,7 @@ def _prototypes(raw: dict) -> dict:
     return protos
 
 
-def _index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
+def index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
     """소재 id → (어느 목록에 들어있나, 소재)."""
     out: dict[str, tuple[str, dict]] = {}
     for key, items in mats.items():
@@ -331,7 +345,7 @@ def _index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
     return out
 
 
-def _clone_extras(seg: dict, index: dict, mats: dict) -> None:
+def clone_extras(seg: dict, index: dict, mats: dict) -> None:
     """세그먼트가 참조하는 extra 소재(speed·canvas·effects…)를 복제해 새로 물린다.
 
     원본은 세그먼트마다 extra 를 독점한다(공유 0개). 프로토타입을 복제하면서 참조를
@@ -349,7 +363,7 @@ def _clone_extras(seg: dict, index: dict, mats: dict) -> None:
             continue
         key, mat = found
         copied = copy.deepcopy(mat)
-        copied["id"] = _uid()
+        copied["id"] = new_id()
         mats.setdefault(key, []).append(copied)
         index[copied["id"]] = (key, copied)
         fresh.append(copied["id"])
@@ -363,10 +377,10 @@ def _seg_from(proto: dict, material_id: str, start: float, dur: float,
     """target 은 타임라인에서 차지하는 시간, source 는 원본에서 소비하는 시간.
     배속을 걸면 source = target × speed 다."""
     seg = copy.deepcopy(proto)
-    seg["id"] = _uid()
+    seg["id"] = new_id()
     seg["material_id"] = material_id
     if index is not None and mats is not None:
-        _clone_extras(seg, index, mats)
+        clone_extras(seg, index, mats)
     seg["target_timerange"] = {"start": round(start * US), "duration": round(dur * US)}
     if seg.get("source_timerange") is not None:
         seg["source_timerange"] = {"start": round(src_in * US),
@@ -381,15 +395,15 @@ def _seg_from(proto: dict, material_id: str, start: float, dur: float,
 def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = False) -> Path:
     """타임라인을 캡컷 드래프트로 쓴다. 템플릿 프로젝트를 복제한 뒤 세그먼트만 교체한다."""
     src_dir = draft_dir(template)
-    dst_dir = _copy_project(src_dir, name, overwrite)
+    dst_dir = copy_project(src_dir, name, overwrite)
 
     raw = json.loads((src_dir / "draft_info.json").read_text(encoding="utf-8"))
-    protos = _prototypes(raw)
+    protos = prototypes(raw)
     if not protos["video"] or not protos["text"].get("main"):
-        raise RuntimeError(f"템플릿 {src_dir.name} 에 영상/자막 견본이 없다")
+        raise RuntimeError(f"template {src_dir.name} needs at least one video clip and one caption to copy from")
 
     mats = raw["materials"]
-    index = _index_materials(mats)
+    index = index_materials(mats)
     videos, texts, audios = [], [], []
     v_track, t_tracks, a_track = [], {}, []
 
@@ -399,7 +413,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         # 영상
         vt_proto, vs_proto, vm_proto = protos["video"]
         vm = copy.deepcopy(vm_proto)
-        vm["id"] = _uid()
+        vm["id"] = new_id()
         vm["local_material_id"] = str(uuid.uuid4())
         if c.src:
             vm["path"] = str(Path(c.src).resolve())
@@ -416,12 +430,12 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
                 continue
             _, ts_proto, tm_proto = proto
             tm = copy.deepcopy(tm_proto)
-            tm["id"] = _uid()
+            tm["id"] = new_id()
             content = json.loads(tm.get("content") or "{}")
-            content["text"] = text
+            content["text"] = text = plain_caption(text)
             for style in content.get("styles") or []:
                 if isinstance(style.get("range"), list) and len(style["range"]) == 2:
-                    style["range"] = [0, _u16len(text)]
+                    style["range"] = [0, u16len(text)]
             tm["content"] = json.dumps(content, ensure_ascii=False)
             texts.append(tm)
             t_tracks.setdefault(kind, []).append(
@@ -431,7 +445,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         if c.rec and protos["audio"] and c.rec_out > c.rec_in and not getattr(timeline, "voice_source", None):
             _, as_proto, am_proto = protos["audio"]
             am = copy.deepcopy(am_proto)
-            am["id"] = _uid()
+            am["id"] = new_id()
             am["local_material_id"] = str(uuid.uuid4())
             am["path"] = str(Path(c.rec).resolve())
             am["name"] = Path(c.rec).stem
@@ -452,13 +466,13 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
     elif audios:
         mats["audios"] = keep + audios
 
-    tracks = [dict(protos["video"][0], segments=v_track, id=_uid())]
+    tracks = [dict(protos["video"][0], segments=v_track, id=new_id())]
     for kind, segs in t_tracks.items():
-        tracks.append(dict(protos["text"][kind][0], segments=segs, id=_uid()))
+        tracks.append(dict(protos["text"][kind][0], segments=segs, id=new_id()))
     if passthrough:
         tracks.append(passthrough[1])
     elif a_track:
-        tracks.append(dict(protos["audio"][0], segments=a_track, id=_uid()))
+        tracks.append(dict(protos["audio"][0], segments=a_track, id=new_id()))
     # 음악·효과음 등 우리가 안 건드리는 오디오 트랙은 그대로 살려둔다
     kept_ids = {a["id"] for a in keep}
     for track in raw["tracks"]:
@@ -477,38 +491,39 @@ def write_captions(project: str | Path, style: str | Path, name: str,
     """프로젝트를 복제하고 자막 트랙 하나만 얹는다. 영상·오디오는 손대지 않는다."""
     src_dir = draft_dir(project)
     style_raw = json.loads((draft_dir(style) / "draft_info.json").read_text(encoding="utf-8"))
-    proto = _prototypes(style_raw)["text"].get("main")
+    proto = prototypes(style_raw)["text"].get("main")
     if not proto:
-        raise RuntimeError(f"스타일 프로젝트 {style} 에 자막 견본이 없다")
+        raise RuntimeError(f"style project {style} has no caption to copy the look from")
     track_proto, seg_proto, mat_proto = proto
 
     raw = json.loads((src_dir / "draft_info.json").read_text(encoding="utf-8"))
     mats = raw["materials"]
     # extra 소재는 스타일 프로젝트에서 찾아 이 프로젝트로 복제해 온다
-    style_index = _index_materials(style_raw["materials"])
+    style_index = index_materials(style_raw["materials"])
     segs = []
     for start, end, text in captions:
         tm = copy.deepcopy(mat_proto)
-        tm["id"] = _uid()
+        tm["id"] = new_id()
         content = json.loads(tm.get("content") or "{}")
         content["text"] = text
-        content["styles"] = [dict((content.get("styles") or [{}])[0], range=[0, _u16len(text)])]
+        content["styles"] = [dict((content.get("styles") or [{}])[0], range=[0, u16len(text)])]
         tm["content"] = json.dumps(content, ensure_ascii=False)
         mats.setdefault("texts", []).append(tm)
         segs.append(_seg_from(seg_proto, tm["id"], start, end - start,
                               index=style_index, mats=mats))
-    raw["tracks"].append(dict(copy.deepcopy(track_proto), segments=segs, id=_uid()))
+    raw["tracks"].append(dict(copy.deepcopy(track_proto), segments=segs, id=new_id()))
 
-    dst_dir = _copy_project(src_dir, name, overwrite)
+    dst_dir = copy_project(src_dir, name, overwrite)
     _save(raw, dst_dir, name, int(_mtime(src_dir) * 1_000_000))
     return dst_dir
 
 
-def _copy_project(src_dir: Path, name: str, overwrite: bool) -> Path:
+def copy_project(src: str | Path, name: str, overwrite: bool = False) -> Path:
+    src_dir = draft_dir(src)
     dst_dir = DRAFT_ROOT / name
     if dst_dir.exists():
         if not overwrite:
-            raise FileExistsError(f"이미 있는 캡컷 프로젝트다: {name} (덮어쓰려면 --overwrite)")
+            raise FileExistsError(f"CapCut project already exists: {name} (use --overwrite to replace it)")
         shutil.rmtree(dst_dir)
     # 백업·임시·잠금 파일만 뺀다. 나머지는 뭐가 필요한지 확실치 않으니 통째로 가져간다.
     # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 - 실측)
@@ -517,7 +532,21 @@ def _copy_project(src_dir: Path, name: str, overwrite: bool) -> Path:
     return dst_dir
 
 
-def _save(raw: dict, dst_dir: Path, name: str, now: int) -> None:
+def load_raw(name_or_path: str | Path) -> dict:
+    return json.loads((draft_dir(name_or_path) / "draft_info.json").read_text(encoding="utf-8"))
+
+
+def save_in_place(name_or_path: str | Path, raw: dict) -> Path:
+    """load_raw 로 읽어 고친 문서를 같은 프로젝트에 되쓴다. 두 문서와 목록용 길이를 같이 맞춘다."""
+    root = draft_dir(name_or_path)
+    if is_open(root):
+        raise RuntimeError(f"{root.name} is open in CapCut - close it first, "
+                           f"or CapCut will save over this edit when it closes")
+    _save(raw, root, root.name, int(time.time() * US), fresh_ids=False)
+    return root
+
+
+def _save(raw: dict, dst_dir: Path, name: str, now: int, *, fresh_ids: bool = True) -> None:
     # draft_info.id 는 '타임라인 id' 다. Timelines/project.json 의 main_timeline_id 및
     # Timelines/<id>/ 폴더명과 반드시 같아야 한다. 새로 만들면 캡컷이 메인 타임라인을
     # 못 찾아 빈 탭을 띄우고 재생 길이가 0 이 된다(실측).
@@ -534,20 +563,22 @@ def _save(raw: dict, dst_dir: Path, name: str, now: int) -> None:
         sub = dst_dir / "Timelines" / str(main_id) / "draft_info.json"
         if main_id != raw.get("id"):
             raise RuntimeError(
-                f"타임라인 id 불일치: draft_info.id={raw.get('id')} vs main_timeline_id={main_id}")
+                f"timeline id mismatch: draft_info.id={raw.get('id')} vs main_timeline_id={main_id}")
         if sub.parent.exists():
             sub.write_text(body, encoding="utf-8")
-        pj["id"] = _uid()          # 프로젝트 식별자는 새로 (템플릿과 겹치면 안 된다)
+        if fresh_ids:
+            pj["id"] = new_id()      # 프로젝트 식별자는 새로 (템플릿과 겹치면 안 된다)
         pj["update_time"] = now
         project_path.write_text(json.dumps(pj, ensure_ascii=False), encoding="utf-8")
 
     meta_path = dst_dir / "draft_meta_info.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta["draft_id"] = _uid()
-        meta["draft_name"] = name
-        meta["draft_fold_path"] = str(dst_dir)
-        meta["draft_root_path"] = str(DRAFT_ROOT)
+        if fresh_ids:
+            meta["draft_id"] = new_id()
+            meta["draft_name"] = name
+            meta["draft_fold_path"] = str(dst_dir)
+            meta["draft_root_path"] = str(DRAFT_ROOT)
         meta["tm_duration"] = raw["duration"]
         meta["tm_draft_modified"] = now
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
@@ -561,7 +592,7 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
     """
     root = draft_dir(name_or_path)
     raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
-    ids = set(_index_materials(raw.get("materials") or {}))
+    ids = set(index_materials(raw.get("materials") or {}))
     problems: list[str] = []
 
     dangling, seen = 0, {}
@@ -574,9 +605,9 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
                     dangling += 1
                 seen[ref] = seen.get(ref, 0) + 1
     if dangling:
-        problems.append(f"끊긴 소재 참조 {dangling}개")
+        problems.append(f"{dangling} dangling material reference(s)")
     if shared := sum(1 for n in seen.values() if n > 1):
-        problems.append(f"여러 세그먼트가 공유하는 extra 소재 {shared}개 - 미리보기 재생이 안 된다")
+        problems.append(f"{shared} extra material(s) shared between segments - the CapCut preview will not play")
 
     for track in raw["tracks"]:
         segs = sorted(track.get("segments") or [], key=lambda s: s["target_timerange"]["start"])
@@ -588,20 +619,20 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
                    - (a["target_timerange"]["start"] + a["target_timerange"]["duration"])) > 1000
         )
         if holes:
-            problems.append(f"영상 트랙에 틈 {holes}개 - 검은 프레임이 낀다")
+            problems.append(f"{holes} gap(s) in a video track - black frames between cuts")
 
     for mat in raw["materials"].get("texts") or []:
         try:
             content = json.loads(mat.get("content") or "{}")
         except json.JSONDecodeError:
             continue
-        want = _u16len(content.get("text", ""))
+        want = u16len(content.get("text", ""))
         for style in content.get("styles") or []:
             rng = style.get("range")
             if isinstance(rng, list) and len(rng) == 2 and rng[1] != want:
                 problems.append(
-                    f"자막 스타일 범위가 글자 수와 안 맞는다 ({rng} vs {want}): "
-                    f"{content.get('text', '')[:16]!r} - 그 부분만 크기가 튄다")
+                    f"caption style range {rng} does not cover the text ({want} UTF-16 units): "
+                    f"{content.get('text', '')[:16]!r} - that part will render at the wrong size")
 
     # 타임라인 id 고리: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
     project_path = root / "Timelines" / "project.json"
@@ -610,19 +641,19 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
         main_id = pj.get("main_timeline_id")
         if main_id != raw.get("id"):
             problems.append(
-                f"타임라인 id 불일치 (draft_info.id={str(raw.get('id'))[:8]} vs "
-                f"main_timeline_id={str(main_id)[:8]}) - 재생이 안 된다")
+                f"timeline id mismatch (draft_info.id={str(raw.get('id'))[:8]} vs "
+                f"main_timeline_id={str(main_id)[:8]}) - the player will not play")
         sub = root / "Timelines" / str(main_id) / "draft_info.json"
         if not sub.exists():
-            problems.append(f"하위 타임라인 문서 없음: Timelines/{str(main_id)[:8]}…/draft_info.json")
+            problems.append(f"missing sub timeline document: Timelines/{str(main_id)[:8]}…/draft_info.json")
         elif json.loads(sub.read_text(encoding="utf-8")).get("duration") != raw.get("duration"):
-            problems.append("루트와 하위 타임라인의 길이가 다르다 - 둘 다 써야 한다")
+            problems.append("root and sub timeline documents disagree - write both")
 
     for path_key in ("videos", "audios"):
         for mat in raw["materials"].get(path_key) or []:
             p = _resolve(mat.get("path", ""), root)
             if p and not p.exists():
-                problems.append(f"파일 없음: {p.name}")
+                problems.append(f"missing media: {p.name}")
     return problems
 
 

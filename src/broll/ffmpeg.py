@@ -25,13 +25,13 @@ _PREFERRED = (
 
 
 @functools.cache
-def _bin(name: str) -> str:
+def binary(name: str) -> str:
     for d in _PREFERRED:
         if d and (cand := d / name).exists():
             return str(cand)
     p = shutil.which(name)
     if not p:
-        raise ToolMissing(f"{name} 없음. `brew install ffmpeg-full` 후 다시 시도.")
+        raise ToolMissing(f"{name} not found. Install it with `brew install ffmpeg-full`.")
     return p
 
 
@@ -39,16 +39,16 @@ def run(args: list[str], *, quiet: bool = True) -> subprocess.CompletedProcess:
     cp = subprocess.run(args, capture_output=True, text=True, errors="replace")
     if cp.returncode != 0:
         tail = "\n".join((cp.stderr or "").strip().splitlines()[-12:])
-        raise RuntimeError(f"실패: {' '.join(args[:3])} ...\n{tail}")
+        raise RuntimeError(f"failed: {' '.join(args[:3])} ...\n{tail}")
     return cp
 
 
 def ffmpeg(*args: str) -> None:
-    run([_bin("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", *args])
+    run([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y", *args])
 
 
 def probe(path: Path) -> dict:
-    cp = run([_bin("ffprobe"), "-v", "error", "-print_format", "json",
+    cp = run([binary("ffprobe"), "-v", "error", "-print_format", "json",
               "-show_format", "-show_streams", str(path)])
     return json.loads(cp.stdout)
 
@@ -60,7 +60,7 @@ def duration(path: Path) -> float:
     for s in info.get("streams", []):
         if d := s.get("duration"):
             return float(d)
-    raise RuntimeError(f"길이를 못 읽음: {path}")
+    raise RuntimeError(f"could not read the duration of {path}")
 
 
 _HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}   # PQ / HLG
@@ -88,7 +88,7 @@ def has_audio(path: Path) -> bool:
 
 
 def has_filter(name: str) -> bool:
-    cp = subprocess.run([_bin("ffmpeg"), "-hide_banner", "-filters"],
+    cp = subprocess.run([binary("ffmpeg"), "-hide_banner", "-filters"],
                         capture_output=True, text=True, errors="replace")
     return any(line.split()[1:2] == [name] for line in cp.stdout.splitlines() if line.strip())
 

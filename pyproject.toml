@@ -1,9 +1,22 @@
 [project]
 name = "broll"
 version = "0.1.0"
-description = "릴스 조립기 - 줄별 녹음 트림, 타임라인 조립, 캡컷 드래프트 출력"
+description = "Line up rough clips and captions with your recorded voice, and hand back a real CapCut project."
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
+keywords = ["capcut", "reels", "shorts", "captions", "whisper", "ffmpeg"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Homepage = "https://github.com/june1ee/b-roll"
+Issues = "https://github.com/june1ee/b-roll/issues"
 
 [project.scripts]
 broll = "broll.cli:main"

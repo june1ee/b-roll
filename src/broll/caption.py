@@ -1,7 +1,7 @@
 """말한 영상 → 구절 단위 자막.
 
-썰 포맷(0814)은 자막이 말한 구절 그대로이고 녹음 트랙도 없어서 1:1로 짝지을 게 없다.
-브이로그(0806)도 자막은 말한 그대로를 어미만 줄인 것이라, 받아쓴 걸 깔고 손으로 다듬는 게 빠르다.
+통짜 테이크를 캡컷에서 잘라 쓴 영상은 자막이 말한 구절 그대로이고 녹음 트랙도 없어서 1:1로 짝지을 게 없다.
+줄별 녹음 브이로그도 자막은 말한 그대로를 어미만 줄인 것이라, 받아쓴 걸 깔고 손으로 다듬는 게 빠르다.
 타임라인에서 들리는 목소리를 받아쓰고 짧은 구절로 묶기만 하면 된다.
 """
 
@@ -20,9 +20,9 @@ from . import ffmpeg as ff
 _AUDIO_REV = "2"  # timeline_audio 만드는 방식이 바뀌면 올린다 (캐시 무효화용)
 CLIP_CACHE = Path(os.environ.get("BROLL_CLIP_DIR", Path.home() / ".cache/broll/clips"))
 
-MAX_CHARS = 16         # 0814 의 가장 긴 줄이 공백 포함 19자. 한 줄로 안 접히는 선
+MAX_CHARS = 16         # 한국어 기준. 실측 썰 영상의 가장 긴 줄이 공백 포함 19자 - 한 줄로 안 접히는 선
 PAUSE = 0.35           # 원본에서 이만큼 쉬면 구절을 끊는다
-# 여기서 끊으면 말의 호흡과 맞는다 (연결어미·종결어미)
+# 여기서 끊으면 말의 호흡과 맞는다 (연결어미·종결어미). 한국어 전용 - 다른 언어는 긴 덩어리를 글자 수로만 나눈다
 CLAUSE_ENDS = ("고", "서", "데", "니까", "면", "요", "다", "까", "며", "만", "게", "죠")
 HOLD = 1.5             # 말이 끝난 뒤 다음 자막까지 비면 이만큼만 더 띄운다
 
@@ -55,7 +55,7 @@ def voice_cuts(project: str | Path) -> list[Cut]:
     cuts = []
     for v in cc.voice_segments(project):
         if not v.src or not v.src.exists():
-            raise FileNotFoundError(f"녹음 파일을 못 찾음: {v.src}")
+            raise FileNotFoundError(f"recording not found: {v.src}")
         cuts.append(Cut(v.start, v.end, v.src, v.src_in, v.src_in + v.src_dur))
     return cuts
 
@@ -67,7 +67,7 @@ def main_cuts(project: str | Path) -> list[Cut]:
     videos = {v["id"]: v for v in raw["materials"].get("videos") or []}
     track = next((t for t in raw["tracks"] if t["type"] == "video"), None)
     if not track:
-        raise RuntimeError(f"{root.name}: 영상 트랙이 없다")
+        raise RuntimeError(f"{root.name}: no video track")
     cuts = []
     for s in sorted(track["segments"], key=lambda s: s["target_timerange"]["start"]):
         mat = videos.get(s["material_id"])
@@ -75,7 +75,7 @@ def main_cuts(project: str | Path) -> list[Cut]:
         if not src:
             continue
         if not src.exists():
-            raise FileNotFoundError(f"원본 영상을 못 찾음: {src} (옮겼다면 캡컷에서 다시 연결)")
+            raise FileNotFoundError(f"source video not found: {src} (if you moved it, relink it in CapCut)")
         tr, sr = s["target_timerange"], s["source_timerange"]
         cuts.append(Cut(tr["start"] / cc.US, (tr["start"] + tr["duration"]) / cc.US, src,
                         sr["start"] / cc.US, (sr["start"] + sr["duration"]) / cc.US))
@@ -112,9 +112,9 @@ def timeline_audio(cuts: list[Cut]) -> Path:
     return dst
 
 
-def spoken_words(cuts: list[Cut]) -> list[Spoken]:
+def spoken_words(cuts: list[Cut], lang: str = "ko") -> list[Spoken]:
     out = []
-    for w in asr.words(timeline_audio(cuts)):
+    for w in asr.words(timeline_audio(cuts), lang):
         # 어느 컷에서 나온 말인지 - 컷이 바뀌면 줄도 바꾼다
         i = next((k for k, c in enumerate(cuts) if c.tl_start <= (w.start + w.end) / 2 < c.tl_end),
                  min(range(len(cuts)), key=lambda k: abs(cuts[k].tl_start - w.start)))
@@ -170,16 +170,16 @@ def phrases(words: list[Spoken], max_chars: int = MAX_CHARS,
     return out
 
 
-def captions(project: str | Path, max_chars: int = MAX_CHARS,
-             source: str = "auto") -> tuple[str, list[tuple[float, float, str]]]:
+def captions(project: str | Path, max_chars: int = MAX_CHARS, source: str = "auto",
+             lang: str = "ko") -> tuple[str, list[tuple[float, float, str]]]:
     """source: voice(오디오 트랙 녹음) | video(첫 영상 트랙) | auto(녹음이 있으면 voice)."""
     if source == "auto":
         source = "voice" if cc.voice_segments(project) else "video"
     cuts = voice_cuts(project) if source == "voice" else main_cuts(project)
     if not cuts:
-        raise RuntimeError(f"{project}: 받아쓸 {source} 구간이 없다")
+        raise RuntimeError(f"{project}: nothing to transcribe from the {source} track")
     cuts.sort(key=lambda c: c.tl_start)
-    groups = phrases(spoken_words(cuts), max_chars, break_on_cut=source == "voice")
+    groups = phrases(spoken_words(cuts, lang), max_chars, break_on_cut=source == "voice")
     end_of_video = max(cc.read(project).duration, cuts[-1].tl_end)
     out = []
     for i, g in enumerate(groups):
