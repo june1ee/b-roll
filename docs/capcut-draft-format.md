@@ -4,7 +4,7 @@ Notes from reverse-engineering CapCut 9.x project files on macOS, gathered while
 building [b-roll](https://github.com/june1ee/b-roll). CapCut publishes no schema, so
 everything here is measured against real projects rather than documented behaviour.
 
-Verified against CapCut 9.1.4443 and 9.2.0 on macOS, draft `new_version` 173 to 181.
+Verified against CapCut 9.1.4443 to 9.4.0 on macOS, draft `new_version` 173 to 185.
 
 ## Where projects live
 
@@ -28,7 +28,7 @@ Two things surprise people coming from older write-ups:
 - **CapCut 9.x uses `draft_info.json`, not `draft_content.json`.** Tools written against
   the older schema (pyJianYingDraft, pyCapCut) will not find the file they expect.
 - **It is plain JSON, not encrypted.** JianYing (the Chinese build) encrypts drafts from
-  6.0 onward; the international CapCut build does not, at least through 9.2.
+  6.0 onward; the international CapCut build does not, at least through 9.4.
 
 ## The timeline document
 
@@ -177,6 +177,20 @@ Files inside the project folder are referenced with a placeholder prefix:
 Everything after `_##/` is relative to the project folder. External media (camera files and
 so on) is stored as a plain absolute path.
 
+### Animations
+
+A text segment's in, out and loop animations live in its own `material_animations` entry,
+reached through `extra_material_refs` like the other extras:
+
+```jsonc
+{ "id": "7667213374438083857", "resource_id": "7667213374438083857",
+  "type": "in", "start": 0, "duration": 500000, "name": "...", "category_name": "text" }
+```
+
+The entry's `id` equals its `resource_id`: it names the effect, not this use of it. To give
+another segment the same animation, deep-copy the entry into *that* segment's own
+`material_animations` material and leave the id alone.
+
 ### Text tracks are layers, not roles
 
 A project can have several text tracks, and CapCut does not keep a fixed meaning per track.
@@ -192,7 +206,9 @@ CapCut is open it will rewrite that file from its own cache, so your edits are l
 duration shown in the list can go stale even when the project on disk is correct.
 
 Close a project in CapCut before writing to it. An open project may be saved back over your
-changes.
+changes. While a project is open CapCut keeps an empty `.locked` file in its folder and removes
+it on close, so that is the check to make. Closing also rewrites `draft_info.json` even when
+nothing was edited.
 
 ## Reading a draft
 
