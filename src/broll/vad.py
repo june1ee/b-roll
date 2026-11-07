@@ -1,7 +1,7 @@
-"""무음 기반 발화 구간 검출.
+"""Speech span detection from silence.
 
-whisper.cpp 의 세그먼트 타임스탬프는 경계가 0.5~1초씩 밀린다(실측). 그래서 역할을 나눈다:
-**무엇을 말했나는 whisper, 어디서 시작하고 끝났나는 무음 검출.**
+whisper.cpp segment timestamps drift 0.5-1 s at the edges (measured), so the jobs are split:
+**whisper says what was said; silence detection says where it starts and stops.**
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ _START = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _END = re.compile(r"silence_end:\s*(-?[\d.]+)")
 
 
-# -32dB 로는 한국어 어미("~요", "~죠")처럼 조용히 흘리는 문장 끝을 잘라먹는다.
-# 0806 정답지에 맞춰 훑어본 결과 -42dB 에서 끝 경계 오차가 0.72s → 0.11s 로 떨어졌다.
-# 더 낮추면(-46dB) 숨소리까지 발화로 잡아 테이크 구분이 무너진다.
+# At -32 dB, quietly trailing sentence endings (common in Korean) get clipped.
+# Against a hand-edited reference, -42 dB cut the end-edge error from 0.72 s to 0.11 s.
+# Lower (-46 dB) counts breaths as speech and takes stop separating.
 DEFAULT_NOISE_DB = -42
 
 
 def speech_spans(audio: Path, *, noise_db: int = DEFAULT_NOISE_DB, min_silence: float = 0.15,
                  min_speech: float = 0.15) -> list[tuple[float, float]]:
-    """[(start, end), ...] 발화 구간. 아무것도 못 찾으면 파일 전체 한 덩어리."""
+    """Speech spans [(start, end), ...]; the whole file as one span if none are found."""
     total = ff.duration(audio)
     cp = subprocess.run(
         [ff.binary("ffmpeg"), "-hide_banner", "-nostats", "-i", str(audio),
@@ -35,7 +35,7 @@ def speech_spans(audio: Path, *, noise_db: int = DEFAULT_NOISE_DB, min_silence: 
     starts = [float(x) for x in _START.findall(log)]
     ends = [float(x) for x in _END.findall(log)]
 
-    # 무음 구간을 만들어 뒤집는다. silence_end 가 먼저 나오면 파일이 무음으로 시작한 것.
+    # build the silences, then invert them. A leading silence_end means the file starts silent.
     silences: list[tuple[float, float]] = []
     if len(ends) > len(starts):
         silences.append((0.0, ends[0]))

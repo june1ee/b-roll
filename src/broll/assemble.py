@@ -1,4 +1,4 @@
-"""타임라인 조립 - 줄별 녹음을 트림해 이어 붙이고, 각 줄에 영상 구간을 배정한다."""
+"""Timeline assembly: trim and join the per-line recordings and give each line a video span."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from . import align, asr, capcut, vad
 from . import ffmpeg as ff
 from .project import Reel
 
-# 녹음이 없는 줄의 길이 추정치. 한국어 낭독 속도 대략값이라 어디까지나 임시.
+# Length of a line with no recording, from a rough Korean reading speed. A placeholder.
 CHARS_PER_SEC = 5.5
 MIN_LINE = 0.8
-# 말이 씹히는 것보다 조금 긴 게 낫다 - 여백은 나중에 줄일 수 있지만 잘린 음절은 못 되살린다
+# err long: slack can be trimmed later, a clipped syllable cannot be restored
 LEAD_PAD = 0.12
 TAIL_PAD = 0.25
 
@@ -26,17 +26,17 @@ class Clip:
     rec: Path | None = None
     rec_in: float = 0.0
     rec_out: float = 0.0
-    score: float = 0.0          # 정렬 신뢰도 0~1
-    takes: int = 1              # 녹음 안에서 검출된 테이크 수
-    coverage: float = 0.0       # 자막이 들린 말의 몇 %를 덮는가
-    tightened: bool = False     # 텍스트로 좁혔는지 (아니면 테이크 통째)
-    speed: float = 1.0          # 목소리 배속
+    score: float = 0.0          # alignment confidence, 0-1
+    takes: int = 1              # takes detected in the recording
+    coverage: float = 0.0       # share of the heard speech the caption covers
+    tightened: bool = False     # tightened from text, else the whole take
+    speed: float = 1.0          # voice speed
     src: Path | None = None
     src_in: float = 0.0
-    src_len: float = 0.0        # 러프컷 원본 길이
-    src_short: float = 0.0      # 소스가 모자라 프리즈로 때운 시간
-    clock: str | None = None    # 시각 레이어
-    aside: str | None = None    # 괄호 부연 레이어
+    src_len: float = 0.0        # length of the rough clip
+    src_short: float = 0.0      # time filled with a freeze frame because the source ran short
+    clock: str | None = None    # clock layer
+    aside: str | None = None    # aside layer
 
     @property
     def duration(self) -> float:
@@ -48,8 +48,8 @@ class Timeline:
     reel: Reel
     clips: list[Clip] = field(default_factory=list)
     speed: float = 1.0
-    speed_origin: str = ""            # 배속을 어디서 정했는지
-    voice_source: str | None = None   # 목소리를 가져온 캡컷 프로젝트 (역방향 모드)
+    speed_origin: str = ""            # where the speed came from
+    voice_source: str | None = None   # CapCut project the voice came from (--from-capcut)
 
     @property
     def duration(self) -> float:
@@ -86,7 +86,7 @@ class Timeline:
 
 
 def _fit_pool(pool_start: float, pool_len: float, want: float, line) -> tuple[float, float]:
-    """러프컷이 잡아둔 구간(pool) 안에서 want 만큼만 남긴다. 모자란 만큼도 같이 반환."""
+    """Keep `want` seconds of the rough clip's pool, and return the shortfall too."""
     slack = max(pool_len - want, 0.0)
     if line.frm is not None:
         offset = line.frm
@@ -100,11 +100,11 @@ def _fit_pool(pool_start: float, pool_len: float, want: float, line) -> tuple[fl
 
 
 def from_capcut(reel: Reel, source: str) -> Timeline:
-    """캡컷에서 이미 녹음·속도 조절까지 끝낸 프로젝트를 받아 타임라인을 만든다.
+    """Build the timeline from a CapCut project whose voice is already recorded and sped up.
 
-    타이밍은 추정하지 않는다 - 캡컷에서 확정한 값을 그대로 쓴다.
-    정렬(whisper)도 배속 추론도 필요 없고, TTS 로 만든 경우에도 똑같이 동작한다.
-    n번째 목소리 세그먼트 ↔ n번째 줄로 짝짓는다.
+    Timing is read, not estimated: CapCut's values are used as is, so no whisper
+    alignment or speed inference is needed, and TTS works the same way.
+    The nth voice segment pairs with the nth line.
     """
     voices = capcut.voice_segments(source)
     if not voices:
@@ -115,7 +115,7 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
             f"{len(voices)} voice segments.\n  Each line needs exactly one voice segment."
         )
 
-    # 러프컷을 캡컷 영상 트랙에 올려뒀으면 그걸 소스 풀로 쓴다 (파일 경로를 yml 에 안 적어도 된다)
+    # rough clips on the CapCut video track become the source pools, so the yml needs no paths
     rough = capcut.read(source).video
     if rough and not any(l.src for l in reel.lines) and len(rough) != len(voices):
         raise ValueError(
@@ -133,10 +133,10 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
             score=1.0, coverage=1.0, tightened=False, speed=v.speed,
             src=line.src, clock=line.clock, aside=line.aside,
         )
-        if line.src:                                   # yml 이 지정한 파일 전체가 풀
+        if line.src:                                   # the whole file named in the yml is the pool
             clip.src_len = ff.duration(line.src)
             clip.src_in, clip.src_short = _fit_pool(0.0, clip.src_len, clip.duration, line)
-        elif i <= len(rough) and rough[i - 1].src:      # 캡컷 영상 트랙의 러프컷이 풀
+        elif i <= len(rough) and rough[i - 1].src:      # the rough clip on the CapCut video track is the pool
             r = rough[i - 1]
             clip.src = r.src
             clip.src_len = r.src_dur or ff.duration(r.src)
@@ -148,8 +148,8 @@ def from_capcut(reel: Reel, source: str) -> Timeline:
 def build(reel: Reel, *, on_progress=None) -> Timeline:
     tl = Timeline(reel=reel)
     cursor = 0.0
-    # 목소리 배속은 포맷마다 다르다. yml 에 없으면 템플릿이 쓰던 값을 그대로 쓴다.
-    # (역방향 모드에서는 아예 추론하지 않고 캡컷에서 건 값을 읽는다)
+    # Voice speed differs per format. Without one in the yml, use the template's.
+    # (--from-capcut reads the speed set in CapCut instead.)
     if reel.speed:
         default_speed, origin = reel.speed, "set in the yml"
     elif reel.template:
@@ -166,7 +166,7 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
         takes, coverage, tightened = 1, 0.0, False
         speed = line.speed if line.speed else default_speed
         if line.rec:
-            # 원본(ADTS AAC 등) 대신 디코드된 wav 를 기준으로 잰다 - 길이가 정확해야 A/V 가 안 밀린다
+            # measure the decoded wav, not the ADTS AAC source: a wrong length drifts A/V
             wav = ff.cached_wav(line.rec)
             spans = vad.speech_spans(wav)
             chars = asr.transcribe(wav, lang=reel.lang)
@@ -192,7 +192,7 @@ def build(reel: Reel, *, on_progress=None) -> Timeline:
         )
 
         if line.src:
-            # 러프컷은 보통 앞뒤에 여유를 두므로 기본은 가운데 정렬
+            # rough clips usually have slack at both ends, so centre by default
             clip.src_len = ff.duration(line.src)
             clip.src_in, clip.src_short = _fit_pool(0.0, clip.src_len, dur, line)
 

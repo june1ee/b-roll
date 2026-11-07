@@ -1,4 +1,4 @@
-"""미리보기 렌더 - 트림된 녹음 + 영상 구간 + 번인 자막으로 mp4 한 개."""
+"""Preview render: trimmed voice, video spans and burned-in captions in one mp4."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from . import capcut
 from . import ffmpeg as ff
 from .assemble import Timeline
 
-# 목소리 시작 직전에 '치직' 하는 기계음이 섞일 때가 있다. 페이드인이 리드 패드(0.06s)를
-# 완전히 덮도록 잡아서, 그 구간에 뭐가 들어있든 0에서 올라오게 만든다.
+# Recordings sometimes click just before the voice starts. The fade-in covers the whole lead
+# pad (0.06 s), so whatever is in it rises from silence.
 FADE_IN = 0.09
 FADE_OUT = 0.04
 SAMPLE_RATE = 48000
@@ -24,7 +24,7 @@ DEFAULT_EMPHASIS = "#FFD3F2"
 
 
 def emphasis_color(root: Path) -> str:
-    """*강조* 를 칠할 색. 릴스 yml 옆이나 그 위 폴더, 현재 폴더의 style.yml 에서 읽는다."""
+    """Colour for *emphasis*, from style.yml next to the reel yml, in its parent, or in the current folder."""
     for path in (root / "style.yml", root.parent / "style.yml", Path.cwd() / "style.yml"):
         if path.exists():
             d = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -85,9 +85,9 @@ def _dt_escape(text: str) -> str:
 def storyboard(tl: Timeline, video: Path, dst: Path, *,
                cols: int = 4, thumb_w: int = 360,
                notes: dict[int, list[str]] | None = None) -> Path:
-    """컷마다 한 프레임씩 뽑아 한 장으로.
+    """One frame per cut, tiled into one image.
 
-    경고를 터미널에 찍어봐야 안 읽힌다. 어차피 열어보는 이 그림 위에 박아둔다.
+    Warnings printed to a terminal go unread, so they are drawn on this image instead.
     """
     notes = notes or {}
     frames = dst.parent / "frames"
@@ -116,7 +116,7 @@ def storyboard(tl: Timeline, video: Path, dst: Path, *,
     return dst
 
 
-# ---------- 오디오 ----------
+# ---------- audio ----------
 
 def _audio_track(tl: Timeline, work: Path, on_progress) -> Path:
     seg_dir = work / "audio"
@@ -132,14 +132,14 @@ def _audio_track(tl: Timeline, work: Path, on_progress) -> Path:
         spoken = (clip.rec_out - clip.rec_in) if clip.rec else 0.0
 
         if spoken > 0.01:
-            played = spoken / clip.speed          # 배속 후 길이 = 타임라인에서 차지하는 시간
+            played = spoken / clip.speed          # length after speed-up = time on the timeline
             fade_in = min(FADE_IN, played / 3)
             fade_out = min(FADE_OUT, played / 3)
             fade_out_at = max(played - fade_out, 0.0)
             tempo = f"atempo={clip.speed:.4f}," if abs(clip.speed - 1.0) > 0.001 else ""
-            # -ss 는 -i 앞(입력 시킹)에 둔다. 뒤에 두면 필터에 들어가는 타임스탬프가
-            # 0 이 아니라 원본 절대 시각이라, afade 의 st 가 엉뚱한 지점에 걸려
-            # 세그먼트가 통째로 무음이 된다(실측). asetpts 로 한 번 더 못 박는다.
+            # -ss goes before -i (input seeking). After it, timestamps entering the filter start at
+            # the source's absolute time instead of 0, afade's st lands in the wrong place and
+            # the whole segment goes silent. asetpts pins it as well.
             ff.ffmpeg(
                 "-ss", f"{clip.rec_in:.3f}", "-t", f"{spoken:.3f}",
                 "-i", str(ff.cached_wav(clip.rec)),
@@ -150,7 +150,7 @@ def _audio_track(tl: Timeline, work: Path, on_progress) -> Path:
                 "-ac", "2", "-c:a", "pcm_s16le", str(seg),
             )
             parts.append(seg)
-            if (pad := clip.duration - spoken / clip.speed) > 0.01:   # hold 는 무음으로
+            if (pad := clip.duration - spoken / clip.speed) > 0.01:   # hold is filled with silence
                 parts.append(_silence(pad, seg_dir / f"{clip.index:03d}h.wav"))
         else:
             parts.append(_silence(clip.duration, seg))
@@ -167,7 +167,7 @@ def _silence(seconds: float, dst: Path) -> Path:
     return dst
 
 
-# ---------- 비디오 ----------
+# ---------- video ----------
 
 def _video_track(tl: Timeline, work: Path, on_progress) -> Path:
     seg_dir = work / "video"
@@ -211,10 +211,10 @@ def _concat(parts: list[Path], dst: Path) -> Path:
     return dst
 
 
-# ---------- 자막 ----------
+# ---------- captions ----------
 
 def _chunks(text: str) -> list[tuple[str, bool]]:
-    """'*강조*' 표기를 (조각, 강조여부) 목록으로."""
+    """Split '*emphasis*' markup into (piece, emphasised) pairs."""
     out, pos = [], 0
     for m in _EMPH.finditer(text):
         if m.start() > pos:
@@ -227,7 +227,7 @@ def _chunks(text: str) -> list[tuple[str, bool]]:
 
 
 def _dialogue_text(text: str, base_color: str, emphasis: str) -> str:
-    """강조 색만 입힌 ASS 텍스트. 자막은 한 줄로 간다 - 두 줄은 안 쓴다."""
+    """ASS text with only the emphasis colour applied. Captions are always one line."""
     base, pink = _ass_color(base_color), _ass_color(emphasis)
     return "".join(
         f"{{\\c{pink}}}{_escape_text(chunk)}{{\\c{base}}}" if emph else _escape_text(chunk)
@@ -243,14 +243,14 @@ def _ts(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-# 캡컷 단위 → 픽셀 환산 상수. 0806 렌더를 눈으로 맞춰 잡은 값이라 정밀하진 않다.
-# 정확한 생김새는 캡컷 드래프트 쪽이 정답이고, 여기는 타이밍 확인용 근사치다.
-SIZE_K = 6.5   # 0806 캡컷 화면에서 메인 자막이 프레임 폭의 85% 인 것에 맞춰 보정
-OUTLINE_K = 88   # 캡컷 stroke 0.017 → 1.5px. 176 은 글자가 뭉개질 만큼 굵었다
+# CapCut units to pixels, fitted by eye against one render, so approximate.
+# The CapCut draft has the true look; the preview is for checking timing.
+SIZE_K = 6.5   # fitted so a main caption spans 85% of the frame width, as in CapCut
+OUTLINE_K = 88   # CapCut stroke 0.017 -> 1.5 px; 176 was thick enough to smear glyphs
 SHADOW_OFFSET = 3
 
-# libass 는 Apple Color Emoji(sbix 비트맵)를 못 쓴다. 폰트 폴백이 .LastResort 로
-# 떨어져서 두부(≡)가 찍힌다. 미리보기에서는 지우고, 캡컷 드래프트에는 그대로 남긴다.
+# libass cannot draw Apple Color Emoji (sbix bitmaps): fallback lands on .LastResort
+# and draws tofu. Emoji are stripped from the preview; the CapCut draft keeps them.
 _EMOJI = re.compile(
     "[\U0001F000-\U0001FAFF←-⯿☀-➿️‍⃣\U0001F1E6-\U0001F1FF]+"
 )
@@ -304,7 +304,7 @@ def _escape_text(text: str) -> str:
 
 
 def _escape_path(path: Path) -> str:
-    """filter 인자용 이스케이프. 따옴표로 감싸면 ffmpeg 가 옵션 이름으로 오인한다."""
+    """Escape a filter argument. Quoting it makes ffmpeg read it as an option name."""
     s = str(path.resolve())
     for ch in ("\\", "'", ":", "[", "]", ",", ";"):
         s = s.replace(ch, "\\" + ch)

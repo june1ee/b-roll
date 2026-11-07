@@ -1,7 +1,7 @@
-"""캡컷 드래프트(draft_info.json) 읽기·쓰기.
+"""Read and write CapCut drafts (draft_info.json).
 
-CapCut 9.x 는 draft_content.json 이 아니라 draft_info.json 을 쓰고, 평문 JSON이다.
-쓰기는 기존 프로젝트를 복제해 세그먼트만 교체한다. 포맷 정리는 docs/capcut-draft-format.md.
+CapCut 9.x uses draft_info.json, not draft_content.json, and it is plain JSON.
+Writes copy an existing project and replace only the segments. See docs/capcut-draft-format.md.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-US = 1_000_000  # 캡컷 시간 단위는 마이크로초
+US = 1_000_000  # CapCut times are in microseconds
 DRAFT_ROOT = Path(os.environ.get(
     "BROLL_CAPCUT_DRAFTS", Path.home() / "Movies/CapCut/User Data/Projects/com.lveditor.draft"))
 _PLACEHOLDER = "##_draftpath_placeholder"
@@ -24,11 +24,11 @@ _PLACEHOLDER = "##_draftpath_placeholder"
 
 @dataclass
 class Seg:
-    start: float          # 타임라인 위치(초)
+    start: float          # position on the timeline (s)
     end: float
     src: Path | None = None
     src_in: float = 0.0
-    src_dur: float = 0.0  # 원본에서 소비하는 길이 (= (end-start) × speed)
+    src_dur: float = 0.0  # length consumed from the source (= (end-start) x speed)
     speed: float = 1.0
     text: str | None = None
     kind: str = ""        # record | music | sound | text_to_audio | video | text
@@ -59,7 +59,7 @@ def draft_dir(name_or_path: str | Path) -> Path:
 
 
 def is_open(name_or_path: str | Path) -> bool:
-    """캡컷이 이 프로젝트를 열고 있으면 .locked 가 생긴다. 열린 채로 쓰면 캡컷이 닫으면서 덮어쓴다(실측)."""
+    """CapCut keeps a .locked file while a project is open, and saves over any write when it closes."""
     return (draft_dir(name_or_path) / ".locked").exists()
 
 
@@ -74,7 +74,7 @@ def _resolve(raw: str, root: Path) -> Path | None:
 
 
 def _plain_text(content: str) -> str:
-    """텍스트 소재의 content 는 스타일이 섞인 JSON 문자열이다."""
+    """A text material's content is a JSON string holding the text and its styles."""
     try:
         return (json.loads(content) or {}).get("text", "") or ""
     except (json.JSONDecodeError, TypeError):
@@ -136,12 +136,12 @@ _EMPHASIS = re.compile(r"\*([^*]+)\*")
 
 
 def plain_caption(text: str) -> str:
-    """*강조* 는 미리보기에서만 색을 입힌다. 한 자막 안에서 범위별로 색을 나눈 캡컷 실물을 아직 못 봐서 별표만 뗀다."""
+    """*emphasis* is coloured only in the preview. CapCut's form for multi-colour captions is unverified, so only the asterisks go."""
     return _EMPHASIS.sub(r"\1", text)
 
 
 def classify_caption(text: str) -> str:
-    """자막 3층 구조 분류. 실측: 시각 / 메인 / 괄호 부연."""
+    """Classify a caption into one of three layers: clock, main or aside."""
     t = (text or "").strip()
     if CLOCK_RE.match(t):
         return "clock"
@@ -152,25 +152,25 @@ def classify_caption(text: str) -> str:
 
 @dataclass
 class CaptionStyle:
-    """템플릿에서 읽어낸 자막 한 층의 생김새. 미리보기 번인용으로 ASS 에 옮긴다."""
+    """The look of one caption layer read from the template, carried to ASS for the preview."""
     kind: str
-    family: str          # libass 가 찾을 폰트 패밀리
-    size: float          # 캡컷 글꼴 크기
+    family: str          # font family for libass
+    size: float          # CapCut font size
     color: str           # #RRGGBB
     bold: bool
-    stroke: float        # 캡컷 stroke width (정규화값)
+    stroke: float        # CapCut stroke width (normalised)
     shadow_alpha: float  # 0~1
-    y: float             # 캡컷 transform.y
+    y: float             # CapCut transform.y
     scale_x: float
     scale_y: float
 
     def y_px(self, height: int) -> float:
-        # 실측 보정: 캡컷 transform.y 는 화면 '절반' 높이 기준이다.
-        # (0806 의 세 레이어 -0.272/-0.442/-0.589 를 렌더 위치와 맞춰 확인)
+        # CapCut's transform.y is relative to half the frame height, checked with layers at
+        # -0.272/-0.442/-0.589 against where they render.
         return height / 2 * (1 - self.y)
 
 
-# 폰트 파일명 → libass 가 찾는 패밀리. fc-list 로 확인한 이름.
+# Font file name to the family libass looks up, as fc-list reports it.
 _FAMILY = {
     "Pretendard-Medium": "Pretendard Medium",
     "Pretendard-Bold": "Pretendard",
@@ -192,10 +192,10 @@ def _hex(fill) -> str:
 
 
 def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
-    """템플릿 프로젝트의 자막 층별 생김새를 읽는다.
+    """Read the look of each caption layer from the template project.
 
-    미리보기에서 스타일을 손으로 정하려 들면 절대 못 맞춘다(실측으로 확인).
-    캡컷이 들고 있는 값을 그대로 가져오는 게 유일하게 맞는 방법이다.
+    Hand-picked preview styles never matched in measurements; reading the values CapCut
+    holds is the only way that does.
     """
     root = draft_dir(template)
     raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
@@ -232,7 +232,7 @@ def caption_styles(template: str | Path) -> dict[str, CaptionStyle]:
 
 
 def caption_layers(draft: Draft) -> dict[float, dict[str, str]]:
-    """시작 시각별로 자막을 층(메인/시각/부연)으로 묶는다."""
+    """Group captions by start time into layers (main, clock, aside)."""
     out: dict[float, dict[str, str]] = {}
     for t in draft.texts:
         if t.text and t.text.strip():
@@ -245,20 +245,20 @@ VOICE_KINDS = ("record", "text_to_audio")
 
 
 def voice_segments(name_or_path: str | Path) -> list[Seg]:
-    """드래프트에서 목소리(녹음 또는 TTS) 세그먼트만 시간순으로.
+    """Voice segments (recordings or TTS) of a draft, in time order.
 
-    캡컷에서 직접 녹음하고 속도까지 맞춰뒀다면, 타이밍은 이미 확정된 것이다.
-    그걸 읽어 쓰는 쪽이 whisper 정렬로 추정하는 것보다 정확하다.
+    When the voice was recorded and sped up in CapCut its timing is already final, and
+    reading it beats estimating it with whisper.
     """
     draft = read(name_or_path)
     return [s for s in draft.audio if s.kind in VOICE_KINDS]
 
 
 def voice_passthrough(name_or_path: str | Path) -> tuple[list[dict], dict] | None:
-    """목소리 트랙을 통째로 들고 온다 (소재 + 트랙).
+    """Carry the voice tracks over whole, materials and tracks.
 
-    다시 만들지 않고 그대로 옮긴다 - TTS 의 보이스 정보, 볼륨, 페이드 같은 걸
-    재현하려 들면 반드시 뭔가 빠뜨린다.
+    They are copied, not rebuilt: rebuilding TTS voice data, volume, fades and the like
+    always misses something.
     """
     root = draft_dir(name_or_path)
     raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
@@ -274,10 +274,10 @@ def voice_passthrough(name_or_path: str | Path) -> tuple[list[dict], dict] | Non
 
 
 def voice_speed(template: str | Path) -> float:
-    """템플릿이 목소리에 걸어둔 배속(중앙값).
+    """Median voice speed in the template.
 
-    실측: 0806 은 1.30~1.50(평균 1.34), 0703 은 1.10~1.26, 0718(TTS) 은 1.5~2.0.
-    포맷마다 템포가 다르니 값을 박아두지 않고 템플릿에서 읽는다.
+    Measured formats ranged from 1.10-1.26 up to 1.5-2.0 (TTS), so the value is read
+    from the template rather than hardcoded.
     """
     root = draft_dir(template)
     raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
@@ -299,19 +299,19 @@ def new_id() -> str:
 
 
 def u16len(text: str) -> int:
-    """캡컷의 텍스트 스타일 range 는 UTF-16 코드 단위로 센다.
+    """CapCut counts text style ranges in UTF-16 code units.
 
-    이모지(😡 등)는 UTF-16 에서 2단위라 파이썬 len() 으로 세면 범위가 모자라고,
-    빠진 부분만 기본 스타일로 그려져서 글자가 커지고 자막 위치가 틀어진다(실측).
+    An emoji takes two units, so a range from Python's len() falls short and the
+    uncovered part renders in the default style, oversized and shifted.
     """
     return len(text.encode("utf-16-le")) // 2
 
 
 def prototypes(raw: dict) -> dict:
-    """템플릿에서 종류별 '견본' 세그먼트+소재를 뽑는다.
+    """Pick a sample segment and material of each kind from the template.
 
-    스타일·효과·위치가 전부 이 견본에 들어있으므로, 복제해서 텍스트와 시간만 갈아끼우면
-    캡컷에서 잡아둔 모양이 그대로 나온다. 직접 재현하려 들면 절대 못 맞춘다.
+    Style, effects and position all live in the sample, so cloning it and swapping only the
+    text and timing reproduces the CapCut look. Recreating it by hand never matches.
     """
     mats = raw["materials"]
     texts = {t["id"]: t for t in mats.get("texts") or []}
@@ -335,7 +335,7 @@ def prototypes(raw: dict) -> dict:
 
 
 def index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
-    """소재 id → (어느 목록에 들어있나, 소재)."""
+    """Material id to (the list it lives in, material)."""
     out: dict[str, tuple[str, dict]] = {}
     for key, items in mats.items():
         if isinstance(items, list):
@@ -346,11 +346,11 @@ def index_materials(mats: dict) -> dict[str, tuple[str, dict]]:
 
 
 def clone_extras(seg: dict, index: dict, mats: dict) -> None:
-    """세그먼트가 참조하는 extra 소재(speed·canvas·effects…)를 복제해 새로 물린다.
+    """Clone the extra materials a segment refers to (speed, canvas, effects...) and rebind them.
 
-    원본은 세그먼트마다 extra 를 독점한다(공유 0개). 프로토타입을 복제하면서 참조를
-    그대로 두면 여러 세그먼트가 같은 소재를 가리키게 되는데, 그러면 캡컷에서 미리보기
-    재생이 안 된다(실측).
+    In real projects every segment owns its extras. Cloning a prototype but keeping its refs
+    makes several segments share one material, and the CapCut preview then
+    will not play.
     """
     refs = seg.get("extra_material_refs")
     if not isinstance(refs, list):
@@ -374,8 +374,8 @@ def _seg_from(proto: dict, material_id: str, start: float, dur: float,
               src_in: float = 0.0, src_dur: float | None = None,
               speed: float = 1.0, index: dict | None = None,
               mats: dict | None = None) -> dict:
-    """target 은 타임라인에서 차지하는 시간, source 는 원본에서 소비하는 시간.
-    배속을 걸면 source = target × speed 다."""
+    """target is the time taken on the timeline, source the time consumed from the file.
+    With a speed change, source = target x speed."""
     seg = copy.deepcopy(proto)
     seg["id"] = new_id()
     seg["material_id"] = material_id
@@ -393,7 +393,7 @@ def _seg_from(proto: dict, material_id: str, start: float, dur: float,
 
 
 def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = False) -> Path:
-    """타임라인을 캡컷 드래프트로 쓴다. 템플릿 프로젝트를 복제한 뒤 세그먼트만 교체한다."""
+    """Write the timeline as a CapCut draft: copy the template project, replace only the segments."""
     src_dir = draft_dir(template)
     dst_dir = copy_project(src_dir, name, overwrite)
 
@@ -410,7 +410,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
     for c in timeline.clips:
         start, dur = c.tl_start, c.duration
 
-        # 영상
+        # video
         vt_proto, vs_proto, vm_proto = protos["video"]
         vm = copy.deepcopy(vm_proto)
         vm["id"] = new_id()
@@ -423,7 +423,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         v_track.append(_seg_from(vs_proto, vm["id"], start, dur, c.src_in,
                                  index=index, mats=mats))
 
-        # 자막 3층
+        # the three caption layers
         for kind, text in (("main", c.text), ("clock", c.clock), ("aside", c.aside)):
             proto = protos["text"].get(kind)
             if not text or not proto:
@@ -441,7 +441,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
             t_tracks.setdefault(kind, []).append(
                 _seg_from(ts_proto, tm["id"], start, dur, index=index, mats=mats))
 
-        # 녹음 - 원본 파일을 참조하고 잘라 쓴 구간만 source_timerange 로 지정
+        # voice: refer to the source file and set only the used span as source_timerange
         if c.rec and protos["audio"] and c.rec_out > c.rec_in and not getattr(timeline, "voice_source", None):
             _, as_proto, am_proto = protos["audio"]
             am = copy.deepcopy(am_proto)
@@ -456,7 +456,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
                                      c.rec_in, spoken, speed=c.speed,
                                      index=index, mats=mats))
 
-    # 역방향 모드: 목소리 트랙은 원본 프로젝트에서 통째로 옮긴다 (다시 만들지 않는다)
+    # --from-capcut: carry the voice tracks over from the source project whole, not rebuilt
     passthrough = voice_passthrough(timeline.voice_source) if getattr(timeline, "voice_source", None) else None
 
     mats["videos"], mats["texts"] = videos, texts
@@ -473,7 +473,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
         tracks.append(passthrough[1])
     elif a_track:
         tracks.append(dict(protos["audio"][0], segments=a_track, id=new_id()))
-    # 음악·효과음 등 우리가 안 건드리는 오디오 트랙은 그대로 살려둔다
+    # keep the audio tracks broll does not touch, such as music and sound effects
     kept_ids = {a["id"] for a in keep}
     for track in raw["tracks"]:
         if track["type"] == "audio" and any(
@@ -488,7 +488,7 @@ def write_draft(template: str | Path, name: str, timeline, *, overwrite: bool = 
 
 def write_captions(project: str | Path, style: str | Path, name: str,
                    captions: list[tuple[float, float, str]], *, overwrite: bool = False) -> Path:
-    """프로젝트를 복제하고 자막 트랙 하나만 얹는다. 영상·오디오는 손대지 않는다."""
+    """Copy a project and add one caption track. Video and audio are left alone."""
     src_dir = draft_dir(project)
     style_raw = json.loads((draft_dir(style) / "draft_info.json").read_text(encoding="utf-8"))
     proto = prototypes(style_raw)["text"].get("main")
@@ -498,7 +498,7 @@ def write_captions(project: str | Path, style: str | Path, name: str,
 
     raw = json.loads((src_dir / "draft_info.json").read_text(encoding="utf-8"))
     mats = raw["materials"]
-    # extra 소재는 스타일 프로젝트에서 찾아 이 프로젝트로 복제해 온다
+    # extra materials are looked up in the style project and cloned into this one
     style_index = index_materials(style_raw["materials"])
     segs = []
     for start, end, text in captions:
@@ -525,8 +525,8 @@ def copy_project(src: str | Path, name: str, overwrite: bool = False) -> Path:
         if not overwrite:
             raise FileExistsError(f"CapCut project already exists: {name} (use --overwrite to replace it)")
         shutil.rmtree(dst_dir)
-    # 백업·임시·잠금 파일만 뺀다. 나머지는 뭐가 필요한지 확실치 않으니 통째로 가져간다.
-    # (캡컷이 켜져 있으면 새 폴더를 몇 초 안에 알아서 목록에 등록한다 - 실측)
+    # Skip only backup, temp and lock files. It is unclear what else CapCut needs, so copy the rest.
+    # (A running CapCut lists a new folder within seconds on its own.)
     shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(
         "draft_info.json.bak", "template-*.tmp", ".locked"))
     return dst_dir
@@ -537,7 +537,7 @@ def load_raw(name_or_path: str | Path) -> dict:
 
 
 def save_in_place(name_or_path: str | Path, raw: dict) -> Path:
-    """load_raw 로 읽어 고친 문서를 같은 프로젝트에 되쓴다. 두 문서와 목록용 길이를 같이 맞춘다."""
+    """Write a document from load_raw back to its project, updating both copies and the listed duration."""
     root = draft_dir(name_or_path)
     if is_open(root):
         raise RuntimeError(f"{root.name} is open in CapCut - close it first, "
@@ -547,15 +547,15 @@ def save_in_place(name_or_path: str | Path, raw: dict) -> Path:
 
 
 def _save(raw: dict, dst_dir: Path, name: str, now: int, *, fresh_ids: bool = True) -> None:
-    # draft_info.id 는 '타임라인 id' 다. Timelines/project.json 의 main_timeline_id 및
-    # Timelines/<id>/ 폴더명과 반드시 같아야 한다. 새로 만들면 캡컷이 메인 타임라인을
-    # 못 찾아 빈 탭을 띄우고 재생 길이가 0 이 된다(실측).
+    # draft_info.id is the timeline id and must equal main_timeline_id in Timelines/project.json
+    # and the Timelines/<id>/ folder name. With a new one CapCut cannot find the main timeline,
+    # opens an empty tab and shows a zero duration.
     raw["path"] = str(dst_dir / "draft_info.json")
     raw["update_time"] = now
     body = json.dumps(raw, ensure_ascii=False)
     (dst_dir / "draft_info.json").write_text(body, encoding="utf-8")
 
-    # 같은 내용을 하위 타임라인 문서에도 쓴다 (별개 파일이다)
+    # the sub-timeline document is a separate file with the same content
     project_path = dst_dir / "Timelines" / "project.json"
     if project_path.exists():
         pj = json.loads(project_path.read_text(encoding="utf-8"))
@@ -567,7 +567,7 @@ def _save(raw: dict, dst_dir: Path, name: str, now: int, *, fresh_ids: bool = Tr
         if sub.parent.exists():
             sub.write_text(body, encoding="utf-8")
         if fresh_ids:
-            pj["id"] = new_id()      # 프로젝트 식별자는 새로 (템플릿과 겹치면 안 된다)
+            pj["id"] = new_id()      # fresh project id; it must not collide with the template's
         pj["update_time"] = now
         project_path.write_text(json.dumps(pj, ensure_ascii=False), encoding="utf-8")
 
@@ -585,10 +585,10 @@ def _save(raw: dict, dst_dir: Path, name: str, now: int, *, fresh_ids: bool = Tr
 
 
 def validate_draft(name_or_path: str | Path) -> list[str]:
-    """쓴 드래프트가 캡컷이 받아들일 모양인지 확인한다.
+    """Check that a written draft has the shape CapCut accepts.
 
-    실측으로 걸린 것들: extra 소재(speed·canvas·effects)를 여러 세그먼트가 공유하면
-    미리보기 재생이 안 된다. 끊긴 참조나 영상 트랙의 틈도 마찬가지로 위험하다.
+    Failures seen in practice: extra materials (speed, canvas, effects) shared between segments
+    stop the preview from playing. Dangling refs and gaps in the video track are risky too.
     """
     root = draft_dir(name_or_path)
     raw = json.loads((root / "draft_info.json").read_text(encoding="utf-8"))
@@ -634,7 +634,7 @@ def validate_draft(name_or_path: str | Path) -> list[str]:
                     f"caption style range {rng} does not cover the text ({want} UTF-16 units): "
                     f"{content.get('text', '')[:16]!r} - that part will render at the wrong size")
 
-    # 타임라인 id 고리: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
+    # timeline id chain: draft_info.id == project.json.main_timeline_id == Timelines/<id>/
     project_path = root / "Timelines" / "project.json"
     if project_path.exists():
         pj = json.loads(project_path.read_text(encoding="utf-8"))
@@ -670,11 +670,11 @@ def ffprobe_duration(p: Path) -> float:
 
 
 def main_caption_track(draft: Draft) -> list[Seg]:
-    """자막 트랙이 여러 개일 때, 영상 컷 수와 가장 잘 맞는 트랙을 메인으로 본다."""
+    """With several text tracks, the one that best matches the video cuts is the main one."""
     by_start: dict[float, list[Seg]] = {}
     for t in draft.texts:
         by_start.setdefault(round(t.start, 2), []).append(t)
     cuts = {round(v.start, 2) for v in draft.video}
-    # 영상 컷 시작과 겹치는 자막만 남기고, 그 중 시작이 같은 게 여럿이면 첫 번째
+    # keep captions that start with a video cut; among same-start captions take the first
     picked = [segs[0] for start, segs in sorted(by_start.items()) if start in cuts]
     return picked or sorted(draft.texts, key=lambda x: x.start)

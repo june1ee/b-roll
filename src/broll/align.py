@@ -1,11 +1,11 @@
-"""강제 정렬 - 녹음 안에서 '그 줄에 쓸 구간'을 찾는다.
+"""Forced alignment: find the span of a recording that belongs to a caption line.
 
-역할 분담이 핵심이다:
-  - **무엇을 말했나** → whisper (텍스트 매칭, 여러 테이크 중 마지막 고르기)
-  - **어디서 시작하고 끝났나** → 무음 검출 (whisper 타임스탬프는 실측 0.3~1.3초씩 밀린다)
+The two signals do different jobs:
+  - **what was said** -> whisper (text matching, choosing among takes)
+  - **where it starts and stops** -> silence detection (whisper timestamps drift 0.3-1.3 s)
 
-whisper 시간축을 무음 검출이 잡은 발화 범위에 선형으로 맞춘 뒤, 매칭된 구간의 경계를
-가장 가까운 무음 경계로 스냅한다.
+Whisper time is mapped linearly onto the speech range silence detection found, then the
+matched span's edges snap to the nearest silence boundary.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from .asr import Char
 
 _KEEP = re.compile(r"[0-9A-Za-z가-힣ㄱ-ㆎ]")
-# 텍스트로 구간을 좁히는 건 말을 잘라먹을 위험이 있어서, 자막이 사실상 대사 전문일 때만 한다.
-# 실측: coverage 0.70 에서 좁혔더니 "…출근하는"이 "…출근한"에서 잘렸다.
+# Tightening a span from text can clip speech, so it only happens when the caption is nearly the whole line.
+# Tightening at coverage 0.70 clipped the last syllable of a line.
 STRONG_MATCH = 0.85
 MIN_COVERAGE = 0.85
 
@@ -28,9 +28,9 @@ class Span:
     start: float
     end: float
     score: float
-    takes: int = 1          # 검출된 테이크 수 (2 이상이면 재녹음/군더더기 흔적)
-    coverage: float = 0.0   # 자막이 들린 말의 몇 %를 덮는가
-    tightened: bool = False # 텍스트로 구간을 좁혔는지 (아니면 테이크 통째)
+    takes: int = 1          # takes detected; 2+ means a retake or filler
+    coverage: float = 0.0   # share of the heard speech the caption covers
+    tightened: bool = False # span tightened from text, else the whole take
 
     @property
     def duration(self) -> float:
@@ -48,9 +48,9 @@ def _norm_chars(chars: list[Char]) -> tuple[str, list[Char]]:
 
 
 def _fuzzy_substring(exp: str, asr: str) -> tuple[int, int, float]:
-    """ASR 안에서 exp 와 가장 가까운 구간 [start, end) 와 점수. 동점이면 뒤쪽(마지막 테이크)."""
+    """Span [start, end) of the ASR closest to exp, and its score. Ties go to the later span (last take)."""
     m, n = len(exp), len(asr)
-    prev_d = [0] * (n + 1)              # 행 0: 어디서 시작해도 공짜
+    prev_d = [0] * (n + 1)              # row 0: starting anywhere is free
     prev_s = list(range(n + 1))
     for i in range(1, m + 1):
         cur_d = [i] + [0] * n
@@ -70,13 +70,13 @@ def _fuzzy_substring(exp: str, asr: str) -> tuple[int, int, float]:
 
 
 def _rescale(t: float, w0: float, w1: float, v0: float, v1: float) -> float:
-    """whisper 시간축 → 무음 검출 시간축."""
+    """Map whisper time onto the silence-detection time axis."""
     if w1 - w0 < 1e-3:
         return v0
     return v0 + (t - w0) / (w1 - w0) * (v1 - v0)
 
 
-SNAP = 0.35   # 이 안쪽이면 발화 경계에 붙이고, 아니면 계산된 시각을 그대로 쓴다
+SNAP = 0.35   # within this, snap to a speech edge; beyond it keep the computed time
 
 
 def _snap_start(t: float, spans: list[tuple[float, float]]) -> float:
@@ -85,7 +85,7 @@ def _snap_start(t: float, spans: list[tuple[float, float]]) -> float:
     for i, (s, e) in enumerate(spans):
         if s <= t <= e:
             return s if t - s <= SNAP else t
-        if t < s:                       # 무음 갭에 떨어졌으면 다음 발화 시작으로
+        if t < s:                       # in a silent gap: move to the next speech start
             return s
         if i == len(spans) - 1:
             return max(s, t)
@@ -98,7 +98,7 @@ def _snap_end(t: float, spans: list[tuple[float, float]]) -> float:
     for i, (s, e) in enumerate(spans):
         if s <= t <= e:
             return e if e - t <= SNAP else t
-        if t < s:                       # 무음 갭 - 직전 발화 끝으로 (다음 구간으로 넘기면 안 된다)
+        if t < s:                       # in a silent gap: move to the previous speech end, never into the next span
             return spans[i - 1][1] if i else s
     return spans[-1][1]
 
@@ -106,10 +106,10 @@ def _snap_end(t: float, spans: list[tuple[float, float]]) -> float:
 def take_groups(spans: list[tuple[float, float]], *, gap: float = 0.8,
                 tail_gap: float = 1.2, tail_len: float = 0.5
                 ) -> list[list[tuple[float, float]]]:
-    """긴 침묵으로 끊어 '테이크'로 묶는다.
+    """Group speech into takes separated by long silences.
 
-    짧은 숨은 한 테이크 안. 다만 침묵 뒤에 붙은 아주 짧은 조각은 새 테이크가 아니라
-    문장 꼬리('~이에요')인 경우가 많아서 앞 테이크에 붙인다.
+    Short breaths stay inside a take. A very short fragment after a silence is usually the
+    tail of the sentence rather than a new take, so it joins the previous one.
     """
     groups: list[list[tuple[float, float]]] = []
     for span in spans:
@@ -129,9 +129,9 @@ def find_span(chars: list[Char], expected: str,
         return Span(0.0, 0.0, 0.0)
     groups = take_groups(spans)
     v0, v1 = spans[0][0], spans[-1][1]
-    # 첫 테이크를 쓰되, 끝은 '다음 테이크가 시작하기 직전'까지 늘린다.
-    # 실측(0806): 손편집에서는 뒤 군더더기 테이크만 버리고 그 앞 침묵은 남겼다.
-    # 어차피 배속을 걸면 그 침묵도 같이 줄어든다.
+    # Use the first take, extended to just before the next take starts.
+    # Hand edits dropped the trailing filler take but kept the silence before it.
+    # A speed-up shortens that silence anyway.
     first_end = groups[1][0][0] if len(groups) > 1 else groups[0][-1][1]
     first = Span(groups[0][0][0], first_end, 0.0, takes=len(groups))
 
@@ -144,9 +144,9 @@ def find_span(chars: list[Char], expected: str,
     coverage = (c1 - c0) / max(len(asr), 1)
     first.score = score
     first.coverage = coverage
-    # 자막이 대사를 거의 그대로 옮긴 경우에만 텍스트로 구간을 좁힌다.
-    # 자막이 말과 많이 다르면(커버리지가 낮으면) 어느 부분을 말한 건지 텍스트로 못 정하므로
-    # 첫 테이크를 통째로 쓰는 쪽이 안전하다 - 실측상 뒤 테이크는 군더더기였다.
+    # Tighten from text only when the caption is close to verbatim.
+    # At low coverage the text cannot tell which part was spoken, so using the whole first take
+    # is safer; in measured recordings the later takes were filler.
     if score < STRONG_MATCH or coverage < MIN_COVERAGE:
         return first
 

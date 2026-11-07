@@ -1,7 +1,7 @@
-"""whisper.cpp 래퍼 - 녹음 하나를 문자 단위 타임스탬프로 바꾼다.
+"""whisper.cpp wrapper: one recording to per-character timestamps.
 
-정렬(align)에는 단어보다 문자 해상도가 편해서, whisper 토큰 구간 안에서
-문자별 시각을 선형 보간해 내보낸다. 한국어는 어절 경계가 모호해 문자 기준이 안전하다.
+Alignment works better at character than word resolution, so character times are
+interpolated inside each whisper token. Korean word boundaries are ambiguous, so characters are safer.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ CACHE_DIR = Path(os.environ.get("BROLL_CACHE_DIR", Path.home() / ".cache/broll/a
 @dataclass(frozen=True)
 class Char:
     ch: str
-    start: float  # 초
+    start: float  # seconds
     end: float
 
 
@@ -47,7 +47,7 @@ def model_path() -> Path:
     return p
 
 
-_ASR_REV = "2"  # whisper 호출 옵션이 바뀌면 올린다 (캐시 무효화용)
+_ASR_REV = "2"  # bump when the whisper options change, to invalidate the cache
 
 
 def _fingerprint(audio: Path, lang: str) -> str:
@@ -57,7 +57,7 @@ def _fingerprint(audio: Path, lang: str) -> str:
 
 
 def _segments(audio: Path, lang: str) -> list[dict]:
-    """내용 해시로 캐시하므로 재실행은 공짜다."""
+    """Cached by content hash, so reruns are free."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache = CACHE_DIR / f"{_fingerprint(audio, lang)}.json"
     if cache.exists():
@@ -68,12 +68,12 @@ def _segments(audio: Path, lang: str) -> list[dict]:
 
 
 def transcribe(audio: Path, lang: str = "ko") -> list[Char]:
-    """녹음 → 문자별 타임스탬프."""
+    """Recording to per-character timestamps."""
     return _to_chars(_segments(audio, lang))
 
 
 def words(audio: Path, lang: str = "ko") -> list[Word]:
-    """녹음 → 어절별 타임스탬프. -ml 1 -sow 출력이라 whisper 세그먼트 하나가 어절 하나다."""
+    """Recording to per-word timestamps. With -ml 1 -sow each whisper segment is one word."""
     return [Word(seg["text"].strip(), seg["t0"], seg["t1"])
             for seg in _segments(audio, lang) if (seg["text"] or "").strip()]
 
@@ -85,7 +85,7 @@ def _run_whisper(audio: Path, lang: str) -> list[dict]:
         wav = ff.to_wav16k(audio, Path(td) / "in.wav")
         prefix = Path(td) / "out"
         subprocess.run(
-            # -sow 없이 -ml 1 만 주면 토큰이 한글 글자 중간에서 쪼개져 JSON이 깨진 UTF-8이 된다.
+            # -ml 1 without -sow splits tokens inside Hangul syllables and the JSON gets broken UTF-8.
             ["whisper-cli", "-m", str(model_path()), "-f", str(wav),
              "-l", lang, "-ml", "1", "-sow", "-oj", "-of", str(prefix),
              "--no-prints", "-np"],
@@ -104,7 +104,7 @@ def _run_whisper(audio: Path, lang: str) -> list[dict]:
 
 
 def _to_chars(segments: list[dict]) -> list[Char]:
-    """토큰 구간 안에서 문자 시각을 선형 보간. 공백은 버린다."""
+    """Interpolate character times linearly inside a token. Spaces are dropped."""
     out: list[Char] = []
     for seg in segments:
         text = (seg["text"] or "").strip()

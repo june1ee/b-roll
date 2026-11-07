@@ -1,4 +1,4 @@
-"""릴스 정의 파일(yml) 로드와 검증."""
+"""Load and validate reel definition files (yml)."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ import yaml
 
 @dataclass
 class Line:
-    t: str                      # 자막 텍스트
-    rec: Path | None = None     # 이 줄 녹음
-    src: Path | None = None     # 이 줄 영상 소스
-    frm: float | None = None    # 소스 인점(초). 지정하면 다듬기 없이 이 지점부터
-    fit: str = "center"         # 러프컷이 길 때 어디를 남길지: center | start | end
-    speed: float | None = None  # 이 줄만 배속 다르게
-    hold: float = 0.0           # 줄 끝나고 더 유지할 시간
-    clock: str | None = None    # 시각 레이어 (7:30 같은)
-    aside: str | None = None    # 괄호 부연 레이어
+    t: str                      # caption text
+    rec: Path | None = None     # recording for this line
+    src: Path | None = None     # video source for this line
+    frm: float | None = None    # source in-point (s); when set, play from here without fitting
+    fit: str = "center"         # which part of a long rough clip to keep: center | start | end
+    speed: float | None = None  # voice speed for this line only
+    hold: float = 0.0           # extra time to hold after the line
+    clock: str | None = None    # clock layer, like 7:30
+    aside: str | None = None    # aside layer
 
 
 @dataclass
@@ -27,10 +27,10 @@ class Reel:
     width: int = 1080
     height: int = 1920
     fps: int = 30
-    template: str | None = None   # 캡컷 템플릿 프로젝트 이름
-    # 줄 사이 간격. 기본 0 - 실측한 릴스들은 컷과 음성이 1:1 로 딱 붙어 있었다(틈 0개).
+    template: str | None = None   # CapCut template project name
+    # gap between lines; 0 because measured reels had cuts and voice back to back
     gap: float = 0.0
-    speed: float | None = None    # 목소리 배속. None 이면 템플릿에서 읽는다
+    speed: float | None = None    # voice speed; None reads it from the template
     lang: str = "ko"
     lines: list[Line] = field(default_factory=list)
 
@@ -53,10 +53,10 @@ def _ratio(value: str | None) -> tuple[int, int]:
 
 
 def from_draft(name: str, *, root: Path | None = None) -> Reel:
-    """yml 없이 캡컷 프로젝트만으로 릴스를 구성한다.
+    """Build a reel from a CapCut project alone, without a yml.
 
-    녹음·러프컷·자막을 전부 캡컷에서 넣어뒀을 때 쓴다. 목소리 세그먼트 하나가 한 줄이고,
-    같은 시각에서 시작하는 자막을 층별로 붙인다.
+    For when the voice, rough clips and captions are all in CapCut. Each voice segment is a
+    line, and captions starting at the same time attach to it by layer.
     """
     from . import capcut
 

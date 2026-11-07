@@ -2,7 +2,7 @@ from broll.caption import Spoken, phrases
 
 
 def words(*spec):
-    """(text, start, end, cut) 튜플 → Spoken. 원본 시각과 타임라인 시각을 같게 둔다."""
+    """(text, start, end, cut) tuples to Spoken, with source time equal to timeline time."""
     return [Spoken(t, s, e, s, e, cut) for t, s, e, cut in spec]
 
 

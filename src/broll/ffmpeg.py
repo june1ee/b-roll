@@ -1,4 +1,4 @@
-"""ffmpeg/ffprobe 호출 얇은 래퍼."""
+"""Thin wrappers around ffmpeg and ffprobe."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ class ToolMissing(RuntimeError):
     pass
 
 
-# homebrew 의 기본 ffmpeg 8 병에는 libass 가 빠져 있어 자막을 못 굽는다.
-# ffmpeg-full 은 keg-only 라 PATH 에 안 잡히므로 여기서 직접 찾는다. (.zshrc 는 안 건드린다)
+# Homebrew's default ffmpeg 8 bottle lacks libass, so it cannot burn in captions.
+# ffmpeg-full is keg-only and not on PATH, so it is looked up here.
 _PREFERRED = (
     Path(os.environ["BROLL_FFMPEG_DIR"]) if os.environ.get("BROLL_FFMPEG_DIR") else None,
     Path("/opt/homebrew/opt/ffmpeg-full/bin"),
@@ -67,8 +67,8 @@ _HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}   # PQ / HLG
 
 
 def is_hdr(path: Path) -> bool:
-    """아이폰으로 찍으면 클립마다 HDR 여부가 갈린다(Dolby Vision/HLG). 톤매핑 없이
-    변환하면 그 컷만 색이 뜬다."""
+    """iPhone clips vary between SDR and HDR (Dolby Vision/HLG). Converted without tone
+    mapping, the HDR cuts come out washed out."""
     for s in probe(path).get("streams", []):
         if s.get("codec_type") != "video":
             continue
@@ -94,7 +94,7 @@ def has_filter(name: str) -> bool:
 
 
 def to_wav16k(src: Path, dst: Path) -> Path:
-    """whisper.cpp 입력 규격(16kHz 모노 PCM)으로 변환."""
+    """Convert to whisper.cpp's input format (16 kHz mono PCM)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg("-i", str(src), "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(dst))
     return dst
@@ -104,11 +104,11 @@ WAV_CACHE = Path(os.environ.get("BROLL_WAV_DIR", Path.home() / ".cache/broll/wav
 
 
 def cached_wav(src: Path, *, rate: int = 48000, channels: int = 2) -> Path:
-    """녹음을 PCM wav 로 한 번 디코드해 캐시한다.
+    """Decode a recording to PCM wav once and cache it.
 
-    캡컷 녹음은 raw ADTS AAC 라서 컨테이너가 보고하는 길이가 실제 디코드 길이와 다르고,
-    그 상태로 -ss/-t 트림을 하면 구간이 조용히 짧게 잘린다(실측 최대 0.9초). wav 로
-    풀어놓으면 길이·타임스탬프가 정확해지고 반복 트림도 빨라진다.
+    CapCut recordings are raw ADTS AAC, so the container's duration differs from the decoded
+    length and trimming with -ss/-t silently cuts spans short (up to 0.9 s, measured).
+    Decoded, durations and timestamps are exact and repeated trims are faster.
     """
     if src.suffix.lower() == ".wav":
         return src

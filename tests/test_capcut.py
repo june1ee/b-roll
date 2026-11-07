@@ -7,7 +7,7 @@ from broll import capcut as cc
 
 @pytest.fixture
 def project(tmp_path):
-    """캡컷 프로젝트의 최소 골격: 루트 문서, 하위 타임라인 문서, project.json, 메타."""
+    """Minimal CapCut project: root document, sub-timeline document, project.json and meta."""
     raw = {
         "id": "TL", "duration": 2_000_000,
         "tracks": [{"type": "video", "segments": [

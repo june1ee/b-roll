@@ -20,7 +20,7 @@ def _fmt(seconds: float) -> str:
 
 
 def _collect_notes(tl, reverse: bool) -> dict[int, list[str]]:
-    """컷별로 눈으로 알아야 할 것들. 터미널이 아니라 스토리보드에 박힌다."""
+    """Per-cut things to eyeball, drawn on the storyboard rather than printed."""
     notes: dict[int, list[str]] = {}
     for c in tl.clips:
         flags = []
@@ -59,7 +59,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     print(f"reel: {reel.path.name} · {len(reel.lines)} lines · {reel.width}x{reel.height}", file=sys.stderr)
     if args.from_capcut:
-        # 캡컷에서 녹음·속도까지 끝낸 프로젝트를 받아 쓴다. 스타일 템플릿도 기본은 그쪽.
+        # voice recorded and sped up in CapCut; that project is also the default style template
         reel.template = reel.template or args.from_capcut
         print(f"voice: taken as-is from CapCut '{args.from_capcut}' (no alignment)", file=sys.stderr)
         _warn_if_open(args.from_capcut)
@@ -142,14 +142,14 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    """캡컷 프로젝트를 읽어 릴스 yml 뼈대를 만든다. 줄 수와 길이는 녹음에서 가져온다."""
+    """Write a reel yml skeleton from a CapCut project, one line per recording."""
     voices = capcut.voice_segments(args.project)
     if not voices:
         print(f"error: '{args.project}' has no voice recordings or TTS. Record the voice in CapCut first.",
               file=sys.stderr)
         return 1
     draft = capcut.read(args.project)
-    # 이미 자막을 넣어뒀다면 층(메인/시각/부연)별로 나눠 채워준다
+    # captions already in the project fill the main, clock and aside fields
     existing: dict[float, dict[str, str]] = {}
     for t in draft.texts:
         if t.text:
@@ -181,7 +181,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     if args.truth:
-        # 회귀 비교용 정답지. 개인 내용이라 저장소에 안 올린다 - 필요할 때 다시 뽑는다.
+        # regression reference; personal content, so it stays out of the repo and is regenerated
         truth = [
             {"i": i, "rec_in": round(v.src_in, 3), "rec_out": round(v.src_in + v.src_dur, 3),
              "speed": round(v.speed, 3), "tl": [round(v.start, 3), round(v.end, 3)]}
